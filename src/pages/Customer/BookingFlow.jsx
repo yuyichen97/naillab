@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 
 const colors = {
-  primary: '#560A0C',
-  secondary: '#A45D65',
-  accent: '#CCA2A4',
-  background: '#EAD4D6',
+  primary: '#560A0C',     // 奢華酒紅
+  secondary: '#A45D65',   // 乾燥玫瑰
+  accent: '#CCA2A4',      // 暮色粉
+  background: '#EAD4D6',  // 陶瓷粉
   gray: '#f8f9fa'
 };
 
-function CustomerBookingFlow({ stylistSchedule, onSubmitBooking, onBack }) {
+function CustomerBookingFlow({ stylistSchedule = {}, onSubmitBooking, onBack }) {
   const [selectedServices, setSelectedServices] = useState([]);
   const [bookingDate, setBookingDate] = useState('2026-06-04');
   const [bookingTime, setBookingTime] = useState('');
@@ -16,7 +16,7 @@ function CustomerBookingFlow({ stylistSchedule, onSubmitBooking, onBack }) {
   const menuItems = [
     { id: 's1', name: '精緻微奢晶石貓眼', price: 1600, duration: 90 },
     { id: 's2', name: '法式經典線條設計', price: 1500, duration: 90 },
-    { id: 's3', name: '他店安全溫和卸甲', price: 400, duration: 30 }
+    { id: 's3', name: '他店安全溫和卸甲', price:  400, duration: 30 }
   ];
 
   const availableTimes = stylistSchedule[bookingDate] || ['09:00', '14:00', '20:00'];
@@ -32,160 +32,150 @@ function CustomerBookingFlow({ stylistSchedule, onSubmitBooking, onBack }) {
   const totalPrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
   const totalDuration = selectedServices.reduce((sum, s) => sum + s.duration, 0);
 
+  // 🎯 核心修正：點擊送出預約申請
   const handleSend = () => {
     if (selectedServices.length === 0) return alert('請至少選擇一項服務！');
     if (!bookingTime) return alert('請選擇預約時間段！');
 
-    const bookingData = {
-      customerName: '測試小公主',
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const generatedId = `B${todayStr}${randomNum}`;
+
+    // 建立新資料物件
+    const newBookingItem = {
+      id: generatedId,
+      studio: '暮色美甲沙龍', // 🎯 修正：與主畫面的初始推薦保持一致
+      service: selectedServices.map(s => s.name).join(' + '),
+      price: `$${totalPrice.toLocaleString()}`,
       date: bookingDate,
       time: bookingTime,
-      service: selectedServices.map(s => s.name).join(' + '),
-      price: `$${totalPrice}`
+      status: '店家審核中'
     };
 
-    onSubmitBooking(bookingData);
+    // 讀取並合併現有資料
+    const existingRaw = localStorage.getItem('nail_appointments');
+    let currentList = [];
+    
+    if (existingRaw) {
+      currentList = JSON.parse(existingRaw);
+    }
+
+    // 把最新的預約強塞在陣列最前端
+    currentList.unshift(newBookingItem);
+
+    // 寫入快取
+    localStorage.setItem('nail_appointments', JSON.stringify(currentList));
+
+    if (onSubmitBooking) {
+      onSubmitBooking(newBookingItem);
+    }
+
+    alert(`🎉 預約申請提交成功！\n單號：${generatedId}\n請至「我的帳戶」查看排程狀態。`);
+    
+    if (onBack) {
+      onBack(); // 點完彈窗後自動切換回原本帳戶或首頁
+    }
   };
 
   return (
-    <div style={{ width: '100%', minHeight: '100vh' }} className="booking-flow">
+    <div style={{ padding: '24px', fontFamily: 'sans-serif', background: '#fff', minHeight: '100vh', textAlign: 'left' }}>
       
-      {/* 頂部返回 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', paddingBottom: '15px', borderBottom: '1px solid #eee' }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: colors.primary, padding: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: colors.primary }}>
           ⬅️
         </button>
-        <h2 style={{ margin: 0, fontSize: 'clamp(1.2rem, 4vw, 1.5rem)', fontWeight: 'bold', color: '#1a1a1a' }}>線上預約申請</h2>
+        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: '#1a1a1a' }}>線上預約申請</h2>
       </div>
 
-      {/* 主內容 */}
-      <div style={{ maxWidth: '100%' }}>
-        
-        {/* STEP 1: 選擇服務項目 */}
-        <div style={{ marginBottom: '30px', background: '#fff', padding: 'clamp(1rem, 3vw, 1.5rem)', borderRadius: '12px' }}>
-          <h3 style={{ fontSize: 'clamp(0.9rem, 3vw, 1.1rem)', color: colors.primary, margin: '0 0 15px 0', fontWeight: 'bold' }}>1. 選擇服務項目 (可複選)</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '12px' }}>
-            {menuItems.map(item => {
-              const isChecked = selectedServices.some(s => s.id === item.id);
-              return (
-                <div 
-                  key={item.id}
-                  onClick={() => toggleService(item)}
-                  style={{
-                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                    padding: '14px', borderRadius: '12px', border: `2px solid ${isChecked ? colors.secondary : '#eee'}`,
-                    background: isChecked ? `${colors.background}66` : '#fff', cursor: 'pointer', transition: 'all 0.3s',
-                    boxShadow: isChecked ? '0 4px 12px rgba(164, 93, 101, 0.2)' : 'none'
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: 'clamp(0.9rem, 2vw, 1rem)', fontWeight: 'bold', color: '#333', marginBottom: '6px' }}>{item.name}</div>
-                    <div style={{ fontSize: 'clamp(0.75rem, 2vw, 0.85rem)', color: '#888' }}>⏱️ 耗時約 {item.duration} 分鐘</div>
-                  </div>
-                  <div style={{ fontSize: 'clamp(0.95rem, 2vw, 1.1rem)', fontWeight: 'bold', color: colors.primary, marginTop: '8px' }}>
-                    ${item.price}
-                    <span style={{ fontSize: '0.8em', fontWeight: 'normal', marginLeft: '4px' }}>
-                      {isChecked ? '✓' : ''}
-                    </span>
-                  </div>
+      {/* STEP 1 */}
+      <div style={{ marginBottom: '24px' }}>
+        <h3 style={{ fontSize: '15px', color: colors.primary, margin: '0 0 12px 0', fontWeight: 'bold' }}>1. 選擇服務項目 (可複選)</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {menuItems.map(item => {
+            const isChecked = selectedServices.some(s => s.id === item.id);
+            return (
+              <div 
+                key={item.id}
+                onClick={() => toggleService(item)}
+                style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '16px', borderRadius: '12px', border: `1px solid ${isChecked ? colors.secondary : '#eee'}`,
+                  background: isChecked ? `${colors.background}33` : '#fff', cursor: 'pointer', transition: 'all 0.2s'
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#333' }}>{item.name}</div>
+                  <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>⏱️ 耗時約 {item.duration} 分鐘</div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* STEP 2: 選擇預約日期與時段 */}
-        <div style={{ marginBottom: '30px', background: '#fff', padding: 'clamp(1rem, 3vw, 1.5rem)', borderRadius: '12px' }}>
-          <h3 style={{ fontSize: 'clamp(0.9rem, 3vw, 1.1rem)', color: colors.primary, margin: '0 0 15px 0', fontWeight: 'bold' }}>2. 選擇日期與時間</h3>
-          
-          {/* 日期選擇 */}
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px', color: '#333' }}>選擇日期</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: '8px' }}>
-              {['2026-06-04', '2026-06-05', '2026-06-06'].map(d => (
-                <button
-                  key={d}
-                  onClick={() => { setBookingDate(d); setBookingTime(''); }}
-                  style={{
-                    padding: '10px 8px', borderRadius: '8px', fontSize: 'clamp(0.8rem, 2vw, 0.9rem)', fontWeight: 'bold', cursor: 'pointer',
-                    border: bookingDate === d ? 'none' : '1px solid #eee',
-                    background: bookingDate === d ? colors.primary : colors.gray,
-                    color: bookingDate === d ? '#fff' : '#333',
-                    transition: 'all 0.3s'
-                  }}
-                >
-                  {d.substring(5)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 時段選擇 */}
-          <div>
-            <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px', color: '#333' }}>選擇時間</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(70px, 1fr))', gap: '8px' }}>
-              {availableTimes.map(t => (
-                <button
-                  key={t}
-                  onClick={() => setBookingTime(t)}
-                  style={{
-                    padding: '12px 8px', borderRadius: '8px', fontSize: 'clamp(0.8rem, 2vw, 0.9rem)', cursor: 'pointer',
-                    border: bookingTime === t ? 'none' : '1px solid #eee',
-                    background: bookingTime === t ? colors.secondary : '#fff',
-                    color: bookingTime === t ? '#fff' : '#333',
-                    fontWeight: bookingTime === t ? 'bold' : 'normal',
-                    transition: 'all 0.3s',
-                    boxShadow: bookingTime === t ? '0 2px 8px rgba(164, 93, 101, 0.3)' : 'none'
-                  }}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* 摘要與送出按鈕 */}
-        <div style={{ borderTop: '1px solid #eee', paddingTop: '20px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '15px', marginBottom: '20px', fontSize: 'clamp(0.85rem, 2vw, 1rem)' }}>
-            <div style={{ background: '#f9f9f9', padding: '12px', borderRadius: '8px' }}>
-              <div style={{ color: '#666', fontSize: '0.9rem', marginBottom: '4px' }}>預計耗時</div>
-              <div style={{ fontWeight: 'bold', color: colors.primary, fontSize: 'clamp(1rem, 3vw, 1.3rem)' }}>{totalDuration} 分鐘</div>
-            </div>
-            <div style={{ background: '#f9f9f9', padding: '12px', borderRadius: '8px' }}>
-              <div style={{ color: '#666', fontSize: '0.9rem', marginBottom: '4px' }}>總計金額</div>
-              <div style={{ fontWeight: 'bold', color: colors.primary, fontSize: 'clamp(1rem, 3vw, 1.3rem)' }}>${totalPrice}</div>
-            </div>
-          </div>
-
-          <button
-            onClick={handleSend}
-            style={{
-              width: '100%', padding: 'clamp(12px, 3vw, 16px)', border: 'none', borderRadius: '12px',
-              background: colors.primary, color: '#fff', fontSize: 'clamp(0.95rem, 3vw, 1.05rem)', fontWeight: 'bold', cursor: 'pointer',
-              boxShadow: `0 4px 12px ${colors.primary}33`,
-              transition: 'all 0.3s',
-              transform: 'scale(1)'
-            }}
-            onHover={(e) => e.target.style.transform = 'scale(1.02)'}
-          >
-            ✨ 送出預約申請
-          </button>
+                <div style={{ fontSize: '15px', fontWeight: 'bold', color: colors.primary }}>${item.price}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      <style>{`
-        @media (max-width: 768px) {
-          .booking-flow {
-            padding: 1rem;
-          }
-        }
-        @media (max-width: 480px) {
-          .booking-flow {
-            padding: 0.75rem;
-          }
-        }
-      `}</style>
+      {/* STEP 2 */}
+      <div style={{ marginBottom: '24px' }}>
+        <h3 style={{ fontSize: '15px', color: colors.primary, margin: '0 0 12px 0', fontWeight: 'bold' }}>2. 選擇日期與時間</h3>
+        
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+          {['2026-06-04', '2026-06-05', '2026-06-06'].map(d => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => { setBookingDate(d); setBookingTime(''); }}
+              style={{
+                flex: 1, padding: '10px 0', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer',
+                border: bookingDate === d ? 'none' : '1px solid #eee',
+                background: bookingDate === d ? colors.primary : colors.gray,
+                color: bookingDate === d ? '#fff' : '#333'
+              }}
+            >
+              {d.substring(5)}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+          {availableTimes.map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setBookingTime(t)}
+              style={{
+                padding: '12px 0', borderRadius: '8px', fontSize: '13px', cursor: 'pointer',
+                border: bookingTime === t ? 'none' : '1px solid #eee',
+                background: bookingTime === t ? colors.secondary : '#fff',
+                color: bookingTime === t ? '#fff' : '#333',
+                fontWeight: bookingTime === t ? 'bold' : 'normal'
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 底部摘要 */}
+      <div style={{ borderTop: '1px solid #eee', paddingTop: '20px', marginTop: '40px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px', fontSize: '14px', color: '#555' }}>
+          <div>預計耗時：<strong>{totalDuration} 分鐘</strong></div>
+          <div style={{ fontSize: '16px', color: colors.primary }}>總計金額：<strong style={{ fontSize: '22px' }}>${totalPrice.toLocaleString()}</strong></div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSend}
+          style={{
+            width: '100%', padding: '16px', border: 'none', borderRadius: '25px',
+            background: colors.primary, color: '#fff', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer',
+            boxShadow: `0 4px 12px ${colors.primary}33`
+          }}
+        >
+          送出預約申請 ➔
+        </button>
+      </div>
+
     </div>
   );
 }
