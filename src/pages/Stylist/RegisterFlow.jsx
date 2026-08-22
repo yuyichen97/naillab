@@ -10,7 +10,7 @@ const colors = {
 const styleOptions = [
   { id: 'korean', label: '🧸 韓系簡約' },
   { id: 'japanese', label: '🌸 日式輕透' },
-  { id: 'cat-eye', label: '✨ 璀璨貓眼' },
+  { id: 'cat-eye', label: '璀璨貓眼' },
   { id: 'luxury', label: '💎 奢華排鑽' },
   { id: 'hand-paint', label: '🎨 精緻手繪' },
   { id: 'nuance', label: '🌊 暈染暈渲' }
@@ -39,10 +39,10 @@ export default function RegisterFlow({ initialData, onComplete, onCancel }) {
 
   return (
     <div style={{ width: '100%', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `linear-gradient(135deg, ${colors.background} 0%, #f0d0d5 100%)`, padding: '20px', boxSizing: 'border-box' }}>
-      <div style={{ maxWidth: '600px', width: '100%', background: '#fff', borderRadius: '24px', padding: '40px', boxShadow: '0 12px 40px rgba(86, 10, 12, 0.15)', boxSizing: 'border-box', textAlign: 'center' }}>
+      <div style={{ maxWidth: '600px', width: '100%', background: 'rgba(255, 248, 245, 0.68)', border: `1px solid ${colors.accent}`, borderRadius: '24px', padding: '40px', boxShadow: '0 12px 40px rgba(86, 10, 12, 0.15)', backdropFilter: 'blur(18px)', boxSizing: 'border-box', textAlign: 'center' }}>
         
         <div style={{ marginBottom: '30px' }}>
-          <h1 style={{ fontSize: '36px', margin: '0 0 8px 0', color: colors.primary }}>💅 NailLab</h1>
+          <h1 style={{ fontSize: '36px', margin: '0 0 8px 0', color: colors.primary }}>NailLab</h1>
           <p style={{ fontSize: '16px', color: '#666', margin: 0 }}>美甲師入駐 · 工作室建置流程</p>
         </div>
 
@@ -74,7 +74,7 @@ export default function RegisterFlow({ initialData, onComplete, onCancel }) {
                   <div
                     key={style.id}
                     onClick={() => handleToggleStyle(style.label)}
-                    style={{ padding: '16px', borderRadius: '12px', border: isSelected ? `2px solid ${colors.primary}` : '2px solid #eee', background: isSelected ? `${colors.background}44` : '#fefefe', color: isSelected ? colors.primary : '#444', fontWeight: isSelected ? 'bold' : 'normal', cursor: 'pointer', textAlign: 'center' }}
+                    style={{ padding: '16px', borderRadius: '12px', border: isSelected ? `2px solid ${colors.primary}` : '2px solid rgba(204, 162, 164, 0.4)', background: isSelected ? `${colors.background}44` : 'rgba(255, 248, 245, 0.48)', color: isSelected ? colors.primary : '#444', fontWeight: isSelected ? 'bold' : 'normal', cursor: 'pointer', textAlign: 'center' }}
                   >
                     {style.label}
                   </div>
@@ -82,8 +82,8 @@ export default function RegisterFlow({ initialData, onComplete, onCancel }) {
               })}
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button onClick={() => setStep(1)} style={{ flex: 1, padding: '14px', border: '1px solid #ccc', borderRadius: '12px', background: '#fff', color: '#666', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>⬅ 返回</button>
-              <button onClick={handleSubmit} style={{ flex: 2, padding: '14px', border: 'none', borderRadius: '12px', background: colors.primary, color: '#fff', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>✨ 完成設定並入駐</button>
+              <button onClick={() => setStep(1)} style={{ flex: 1, padding: '14px', border: '1px solid rgba(204, 162, 164, 0.5)', borderRadius: '12px', background: 'rgba(255, 248, 245, 0.48)', color: '#666', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>返回</button>
+              <button onClick={handleSubmit} style={{ flex: 2, padding: '14px', border: 'none', borderRadius: '12px', background: colors.primary, color: '#fff', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>完成設定並入駐</button>
             </div>
           </div>
         )}

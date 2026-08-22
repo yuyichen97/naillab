@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { dateFromToday, supabase } from '../../lib/supabase';
 
 const colors = {
   primary: '#560A0C',     // 奢華酒紅
@@ -8,7 +9,7 @@ const colors = {
   gray: '#f8f9fa'
 };
 
-// 🗺️ 全台灣 22 縣市美甲預約完整資料庫
+// 全台灣 22 縣市美甲預約完整資料庫
 const regionData = {
   '台北市': ['大安區', '中山區', '信義區', '萬華區(西門町)', '中正區', '松山區', '內湖區', '士林區', '北投區', '文山區', '大同區', '南港區'],
   '新北市': ['板橋區', '三重區', '中和區', '永和區', '新莊區', '新店區', '土城區', '淡水區', '蘆洲區', '汐止區', '樹林區', '三峽區', '林口區', '五股區', '鶯歌區'],
@@ -34,7 +35,105 @@ const regionData = {
   '連江縣(馬祖)': ['南竿鄉', '北竿鄉']
 };
 
-export default function Login({ onLogin }) {
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isEmailAccount = (value) => emailRegex.test(value.trim());
+const pendingRoleStorageKey = 'nail-lab-pending-auth-role';
+const lineAuthStartUrl = import.meta.env.VITE_LINE_AUTH_START_URL || 'http://localhost:5001/api/auth/line/start';
+
+const localDemoUsers = {
+  customer: {
+    id: '53988bcc-0fd2-4b60-8af3-c51786275361',
+    name: 'nita',
+    phone: 'ccyy940120@gmail.com',
+    email: 'ccyy940120@gmail.com',
+    role: 'customer',
+    location: '',
+    studioName: '',
+    isLocalDemo: true
+  },
+  stylist: {
+    id: '8d02c359-38c4-4a6d-b4ba-7f9c44b32d2b',
+    name: 'yyc nail',
+    phone: 'demo-stylist@gmail.com',
+    email: 'demo-stylist@gmail.com',
+    role: 'stylist',
+    location: '台北市大安區',
+    studioName: 'yyc nail',
+    isLocalDemo: true
+  }
+};
+
+const getErrorMessage = (error, fallback = '請稍後再試。') => {
+  if (!error) return fallback;
+  if (typeof error === 'string') return error;
+
+  const message = error.message || error.error_description || error.details || error.hint;
+  if (message) return message;
+
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch {
+    // Keep the friendly fallback when the error cannot be serialized.
+  }
+
+  return fallback;
+};
+
+const getSignupErrorMessage = (error) => {
+  const message = getErrorMessage(error, '');
+  const lowerMessage = message.toLowerCase();
+
+  if (!message || message === '{}') {
+    return '註冊失敗：目前寄信服務沒有回傳明確錯誤，請先確認 Resend API key、Sender email 是否已驗證，並到 Supabase 儲存 SMTP 設定。';
+  }
+
+  if (lowerMessage.includes('rate limit')) {
+    return '註冊失敗：Email 寄送次數暫時超過限制，請稍後再試，或確認 Custom SMTP 是否已正確啟用。';
+  }
+
+  if (
+    lowerMessage.includes('smtp') ||
+    lowerMessage.includes('sender') ||
+    lowerMessage.includes('from') ||
+    lowerMessage.includes('email provider')
+  ) {
+    return `註冊失敗：寄信設定可能還沒完成。請確認 Resend Sender email 已驗證、API key 正確，Supabase SMTP 已儲存。原始訊息：${message}`;
+  }
+
+  return `註冊失敗：${message}`;
+};
+
+const getOAuthCallbackError = () => {
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const lineError = searchParams.get('line_error') || hashParams.get('line_error');
+  const errorDescription = searchParams.get('error_description') || hashParams.get('error_description');
+  const errorCode = searchParams.get('error_code') || hashParams.get('error_code');
+
+  if (lineError) {
+    const messages = {
+      missing_line_secret: 'LINE 登入還沒完成：請先把 LINE Channel Secret 放到 server/.env，並重新啟動後端。',
+      invalid_line_state: 'LINE 登入逾時或來源不一致，請重新按一次 LINE 登入。',
+      expired_line_state: 'LINE 登入等待太久，請重新按一次 LINE 登入。',
+      missing_line_code: 'LINE 沒有回傳登入授權碼，請重新按一次 LINE 登入。',
+      line_token_exchange_failed: 'LINE 登入失敗：後端無法用授權碼換取 LINE 登入資料，請確認 Channel ID、Channel Secret 與 Callback URL。',
+      line_profile_failed: 'LINE 登入失敗：後端無法讀取 LINE 個人資料，請確認 LINE Login channel 已啟用。'
+    };
+
+    return messages[lineError] || `LINE 登入失敗：${lineError}`;
+  }
+
+  if (!errorDescription && !errorCode) return '';
+
+  if (errorDescription?.includes('Error getting user profile from external provider')) {
+    return 'LINE 登入回傳失敗：Supabase 目前無法讀取 LINE 個人資料。請先確認 LINE provider 的 Client Secret、Scopes 與「允許無 Email 使用者」設定。';
+  }
+
+  return `LINE 登入回傳失敗：${errorDescription || errorCode}`;
+};
+
+export default function Login({ onLogin, isPasswordRecovery = false, onRecoveryComplete }) {
   // 🧭 內部流程控管
   const [step, setStep] = useState(1);
   const [selectedRole, setSelectedRole] = useState('customer'); 
@@ -44,33 +143,35 @@ export default function Login({ onLogin }) {
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-
-  // 🔒 驗證碼相關狀態 
-  const [otpCode, setOtpCode] = useState('');               // 使用者輸入的驗證碼
-  const [isOtpSent, setIsOtpSent] = useState(false);         // 是否已發送驗證碼
-  const [countdown, setCountdown] = useState(0);             // 倒數計時秒數
-
+  const [formMessage, setFormMessage] = useState('');
+  const [recoveryPassword, setRecoveryPassword] = useState('');
+  const [recoveryPasswordConfirm, setRecoveryPasswordConfirm] = useState('');
+  const [isSendingRecovery, setIsSendingRecovery] = useState(false);
   // 🔮 雙層地區連動狀態
   const [selectedCity, setSelectedCity] = useState('台北市'); 
   const [selectedDistrict, setSelectedDistrict] = useState('大安區'); 
 
-  // 🎯 重置所有欄位與驗證碼狀態
+  // 🎯 重置所有欄位狀態
   useEffect(() => {
     setAccount('');
     setPassword('');
     setName('');
-    setOtpCode('');
-    setIsOtpSent(false);
-    setCountdown(0);
+    setFormMessage('');
   }, [isRegister, step]);
 
-  // ⏳ 驗證碼倒數計時的 Effect
   useEffect(() => {
-    if (countdown > 0) {
-      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-      return () => clearTimeout(timer);
+    const callbackError = getOAuthCallbackError();
+    if (!callbackError) return;
+
+    const pendingRole = window.localStorage.getItem(pendingRoleStorageKey);
+    if (pendingRole === 'customer' || pendingRole === 'stylist') {
+      setSelectedRole(pendingRole);
     }
-  }, [countdown]);
+
+    setStep(2);
+    setFormMessage(callbackError);
+    window.history.replaceState({}, document.title, window.location.origin);
+  }, []);
 
   // 當使用者切換「縣市」時，自動把「行政區」重設為該縣市的第一個選項
   const handleCityChange = (e) => {
@@ -84,111 +185,254 @@ export default function Login({ onLogin }) {
     setStep(2); 
   };
 
-  // ✉️ 模擬發送驗證碼按鈕事件（包含 RegEx 格式防呆檢查）
-  const handleSendOtp = () => {
-    const phoneRegex = /^09\d{8}$/;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const inputAccount = account.trim();
+  const handleDemoLogin = () => {
+    onLogin(localDemoUsers[selectedRole]);
+  };
 
-    if (!inputAccount) {
-      alert('❌ 請先輸入手機號碼或信箱以獲取驗證碼！');
+  const handleLineLogin = async () => {
+    setFormMessage('');
+    window.localStorage.setItem(pendingRoleStorageKey, selectedRole);
+
+    const url = new URL(lineAuthStartUrl);
+    url.searchParams.set('role', selectedRole);
+    url.searchParams.set('returnTo', window.location.origin);
+    window.location.href = url.toString();
+  };
+
+  const showMessage = (message) => {
+    setFormMessage(message);
+    alert(message);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!isEmailAccount(account)) {
+      showMessage('請先輸入美甲師帳號的 Email。');
       return;
     }
 
-    if (!phoneRegex.test(inputAccount) && !emailRegex.test(inputAccount)) {
-      alert('❌ 格式錯誤！請輸入正確的台灣手機號碼或電子信箱。');
+    setIsSendingRecovery(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(account.trim(), {
+      redirectTo: window.location.origin
+    });
+    setIsSendingRecovery(false);
+
+    if (error) {
+      showMessage(`無法寄出重設密碼信：${getErrorMessage(error)}`);
       return;
     }
 
-    // 模擬後端串接發送
-    alert(`✨ 驗證碼已發送至：${inputAccount}\n（ demo 專題簡報展示用驗證碼請輸入：1234 ）`);
-    setIsOtpSent(true);
-    setCountdown(60); // 進入 60 秒倒數
+    showMessage('重設密碼信已寄出，請到信箱點擊連結，再回到 Nail Lab 設定新密碼。');
+  };
+
+  const handleRecoverySubmit = async (event) => {
+    event.preventDefault();
+
+    if (recoveryPassword.length < 8) {
+      showMessage('新密碼至少需要 8 個字元。');
+      return;
+    }
+
+    if (recoveryPassword !== recoveryPasswordConfirm) {
+      showMessage('兩次輸入的新密碼不一致。');
+      return;
+    }
+
+    const { error } = await supabase.auth.updateUser({ password: recoveryPassword });
+    if (error) {
+      showMessage(`密碼更新失敗：${getErrorMessage(error)}`);
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setRecoveryPassword('');
+    setRecoveryPasswordConfirm('');
+    onRecoveryComplete?.();
+    showMessage('密碼已更新，請使用新密碼登入。');
   };
 
   // 送出表單時進行必填欄位檢查
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     // 1. 登入狀態下的必填防呆與資料傳遞
     if (!isRegister) {
       if (!account.trim()) {
-        alert('❌ 請輸入手機號碼或信箱！');
+        showMessage('請輸入 Email！');
         return;
       }
+
+      if (!isEmailAccount(account)) {
+        showMessage('請輸入正確的 Email 格式。');
+        return;
+      }
+
       if (!password.trim()) {
-        alert('❌ 請輸入密碼！');
+        showMessage('請輸入密碼！');
         return;
       }
       
-      const defaultName = selectedRole === 'stylist' ? '專業美甲師' : '消費者';
+      try {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: account.trim(),
+          password: password.trim()
+        });
 
-      onLogin({ 
-        studioName: selectedRole === 'stylist' ? defaultName : '', 
-        name: defaultName, 
-        phone: account.trim(), 
-        role: selectedRole 
-      });
+        if (authError) {
+          showMessage(`登入失敗：${getErrorMessage(authError, '請檢查帳密或身分')}`);
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authData.user.id)
+          .maybeSingle();
+
+        if (profileError || !profile) {
+          showMessage('找不到會員資料，請確認是否已完成註冊。');
+          return;
+        }
+
+        if (profile.role !== selectedRole) {
+          await supabase.auth.signOut();
+          showMessage('登入身分不符合，請重新選擇消費者或美甲師。');
+          return;
+        }
+
+        onLogin({
+          id: profile.id,
+          name: profile.name,
+          phone: profile.phone || authData.user.email,
+          email: authData.user.email,
+          role: profile.role,
+          location: profile.location || '',
+          studioName: profile.name
+        });
+      } catch (err) {
+        console.error('Login error:', err);
+        showMessage('系統錯誤，請稍後再試。');
+      }
       return;
     }
 
     // 2. 註冊狀態下的必填防呆（區分身份）
     if (isRegister) {
-      const phoneRegex = /^09\d{8}$/;
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const inputAccount = account.trim();
+      const accountIsEmail = isEmailAccount(inputAccount);
 
       if (!name.trim()) {
-        const errorMsg = selectedRole === 'stylist' ? '❌ 請填寫沙龍 / 工作室名稱！' : '❌ 請填寫您的姓名 / 暱稱！';
-        alert(errorMsg);
+        const errorMsg = selectedRole === 'stylist' ? '請填寫沙龍 / 工作室名稱！' : '請填寫您的姓名 / 暱稱！';
+        showMessage(errorMsg);
         return;
       }
 
       if (selectedRole === 'stylist' && (!selectedCity || !selectedDistrict)) {
-        alert('❌ 請選擇完整的經營/服務地區！');
+        showMessage('請選擇完整的經營/服務地區！');
         return;
       }
 
-      if (!account.trim() || (!phoneRegex.test(account.trim()) && !emailRegex.test(account.trim()))) {
-        alert('❌ 請填寫正確的手機號碼或信箱！');
-        return;
-      }
-
-      // 🔒 驗證碼必填防呆
-      if (!isOtpSent) {
-        alert('❌ 請先點擊「獲取驗證碼」並完成驗證！');
-        return;
-      }
-
-      if (otpCode.trim() !== '1234') { // 🎯 Demo 報告專用死碼
-        alert('❌ 驗證碼錯誤，請重新輸入！');
+      if (!accountIsEmail) {
+        showMessage('請輸入正確的 Email 格式。');
         return;
       }
 
       if (!password.trim()) {
-        alert('❌ 請設定您的密碼！');
+        showMessage('請設定您的密碼！');
         return;
       }
 
       const fullLocation = `${selectedCity}${selectedDistrict}`;
 
-      if (selectedRole === 'stylist') {
-        // 固定為獨立一人工作室結構
-        const initialEmployees = [{ id: 1, name: '首席設計師 (店長)', isOwner: true }];
-
-        alert(`🎉 美甲師註冊成功！\n工作室：${name}\n服務地區：${fullLocation}\n系統已自動為您登入後台。`);
-        
-        onLogin({ 
-          studioName: name, 
-          name: name, 
-          phone: account.trim(), 
-          role: selectedRole, 
-          location: fullLocation,
-          studioType: 'single',        // 固定傳回單人型態
-          employees: initialEmployees  // 固定傳回單人名單
+      try {
+        let { data: authData, error: authError } = await supabase.auth.signUp({
+          email: inputAccount,
+          password: password.trim(),
+          options: {
+            data: {
+              name: name.trim(),
+              role: selectedRole,
+              location: selectedRole === 'stylist' ? fullLocation : null
+            }
+          }
         });
-      } else {
-        alert(`🎉 消費者註冊成功！已為您自動登入。`);
-        onLogin({ name: name, phone: account.trim(), role: selectedRole });
+
+        if (authError) {
+          showMessage(getSignupErrorMessage(authError));
+          return;
+        }
+
+        if (!authData.session) {
+          showMessage('註冊信已送出。請到 Email 信箱點擊確認連結，完成後再回來用 Email + 密碼登入。');
+          setIsRegister(false);
+          return;
+        }
+
+        const profile = {
+          id: authData.user.id,
+          name: name.trim(),
+          phone: inputAccount,
+          role: selectedRole,
+          location: selectedRole === 'stylist' ? fullLocation : null
+        };
+
+        const { error: profileError } = await supabase.from('profiles').upsert(profile);
+        if (profileError) {
+          showMessage(`會員資料建立失敗：${getErrorMessage(profileError)}`);
+          return;
+        }
+
+        if (selectedRole === 'stylist') {
+          const { data: shop, error: shopError } = await supabase
+            .from('shops')
+            .insert({
+              owner_id: authData.user.id,
+              studio_name: name.trim(),
+              location: fullLocation,
+              rules: '1. 預約請遲到不超過 15 分鐘，逾時自動取消。\n2. 現場操作不開放攜帶寵物與陪同者。\n3. 如需卸甲請於預約時提前備註。',
+              tags: ['韓系', '貓眼'],
+              image_text: ''
+            })
+            .select()
+            .single();
+
+          if (shopError) {
+            showMessage(`工作室建立失敗：${getErrorMessage(shopError)}`);
+            return;
+          }
+
+          await supabase.from('services').insert([
+            { shop_id: shop.id, name: '經典單色美甲', price: 1200, duration: 60 },
+            { shop_id: shop.id, name: '法式優雅彩繪', price: 1599, duration: 120 }
+          ]);
+
+          await supabase.from('schedules').insert([
+            { shop_id: shop.id, work_date: dateFromToday(1), time_slots: ['09:00', '10:00', '11:00'] },
+            { shop_id: shop.id, work_date: dateFromToday(2), time_slots: ['14:00', '15:00'] },
+            { shop_id: shop.id, work_date: dateFromToday(3), time_slots: ['10:00', '13:00', '16:00'] }
+          ]);
+
+          await supabase.from('portfolio_images').insert([
+            { shop_id: shop.id, image_url: 'https://images.unsplash.com/photo-1604654894610-df63bc536371?w=800', sort_order: 0 },
+            { shop_id: shop.id, image_url: 'https://i0.wp.com/greenweddingshoes.com/wp-content/uploads/2025/07/3D-mermaid-beach-nail-ideas-for-2025-ocean-vacation.jpg?fit=1024%2C9999', sort_order: 1 }
+          ]);
+
+          showMessage(`美甲師註冊成功！\n工作室：${name}\n服務地區：${fullLocation}\n系統已自動為您登入後台。`);
+        } else {
+          showMessage(`消費者註冊成功！已為您自動登入。`);
+        }
+
+        onLogin({
+          id: profile.id,
+          name: profile.name,
+          phone: profile.phone,
+          email: authData.user.email || '',
+          role: profile.role,
+          location: profile.location || '',
+          studioName: profile.name
+        });
+      } catch (err) {
+        console.error('Registration error:', err);
+        showMessage(`系統錯誤：${getErrorMessage(err)}`);
       }
     }
   };
@@ -201,7 +445,10 @@ export default function Login({ onLogin }) {
   return (
     <div style={{ 
       width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', background: '#EAD4D6', 
+      alignItems: 'center', justifyContent: 'center',
+      background: step === 1
+        ? 'linear-gradient(180deg, rgba(20,20,20,0.16), rgba(12,12,12,0.48)), url("/login-tools-background.png") center / cover'
+        : 'linear-gradient(180deg, rgba(128,84,76,0.38), rgba(36,25,24,0.78)), url("https://images.unsplash.com/photo-1604654894610-df63bc536371?w=1800&auto=format&fit=crop&q=80") center / cover',
       padding: '16px', boxSizing: 'border-box',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       position: 'relative'
@@ -212,29 +459,163 @@ export default function Login({ onLogin }) {
         .login-card {
           max-width: 450px; 
           width: 100%; 
-          background: #fff; 
-          border-radius: 24px; 
+          background: rgba(42, 31, 29, 0.58);
+          border: 1px solid rgba(255, 248, 245, 0.28);
+          border-radius: 34px; 
           padding: 35px 24px 25px 24px; 
-          box-shadow: 0 12px 36px rgba(86,10,12,0.06); 
+          box-shadow: 0 32px 90px rgba(22, 15, 15, 0.32);
+          backdrop-filter: blur(28px);
           box-sizing: border-box;
         }
+        .login-card h2,
+        .login-card label,
+        .login-card div {
+          color: rgba(255, 248, 245, 0.92);
+        }
+        .login-card input,
+        .login-card select {
+          border-color: rgba(255, 248, 245, 0.28) !important;
+          background: rgba(255, 248, 245, 0.14) !important;
+          color: #fff8f5 !important;
+        }
+        .login-card input::placeholder {
+          color: rgba(255, 248, 245, 0.54);
+        }
+        .login-card button[type="submit"] {
+          background: #fff8f2 !important;
+          color: #560A0C !important;
+          box-shadow: 0 18px 38px rgba(22, 15, 15, 0.22) !important;
+        }
+        .line-login-button {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          padding: 12px 16px;
+          border: 0;
+          border-radius: 999px;
+          background: rgba(255, 248, 245, 0.88);
+          color: #560A0C;
+          font-size: 14px;
+          font-weight: 900;
+          cursor: pointer;
+          box-shadow: 0 16px 32px rgba(86, 10, 12, 0.18);
+        }
+        .line-login-mark {
+          display: grid;
+          width: 24px;
+          height: 24px;
+          place-items: center;
+          border-radius: 999px;
+          background: #560A0C;
+          color: #fff8f5;
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 0;
+        }
+        .auth-divider {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 4px 0;
+          color: rgba(255, 248, 245, 0.64);
+          font-size: 12px;
+          font-weight: 750;
+        }
+        .auth-divider::before,
+        .auth-divider::after {
+          content: '';
+          flex: 1;
+          height: 1px;
+          background: rgba(255, 248, 245, 0.22);
+        }
+        .demo-login-button {
+          width: 100%;
+          padding: 10px 14px;
+          border: 1px solid rgba(255, 248, 245, 0.32);
+          border-radius: 999px;
+          background: rgba(255, 248, 245, 0.12);
+          color: #fff8f5;
+          font-size: 13px;
+          font-weight: 850;
+          cursor: pointer;
+        }
+        .login-card.role-selection {
+          max-width: 660px;
+          padding: 18px 0 0;
+          background: transparent;
+          border: 0;
+          border-radius: 0;
+          box-shadow: none;
+          backdrop-filter: none;
+        }
         .role-box-container {
-          display: flex; 
-          gap: 16px; 
-          margin-bottom: 25px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          margin: 28px 0 24px;
+        }
+        .role-choice {
+          min-height: 190px;
+          padding: 24px 38px;
+          border: 0;
+          background: transparent;
+          color: #fff8f5;
+          cursor: pointer;
+          transition: transform 180ms ease, color 180ms ease;
+          font: inherit;
+        }
+        .role-choice + .role-choice {
+          border-left: 1px solid rgba(255, 248, 245, 0.42);
+        }
+        .role-choice:hover,
+        .role-choice:focus-visible {
+          transform: translateY(-5px);
+          color: #ffffff;
+          outline: none;
+        }
+        .role-choice-title {
+          display: block;
+          margin-bottom: 10px;
+          font-size: 26px;
+          font-weight: 700;
+        }
+        .role-choice-description {
+          display: block;
+          color: rgba(255, 248, 245, 0.7);
+          font-size: 13px;
+        }
+        .role-selection-title,
+        .role-selection-hint {
+          color: #fff8f5 !important;
+          text-shadow: 0 2px 14px rgba(0, 0, 0, 0.34);
         }
         @media (max-width: 400px) {
           .login-card {
             padding: 24px 16px 20px 16px;
             border-radius: 16px;
           }
+          .login-card.role-selection {
+            padding: 8px 0 0;
+          }
           .role-box-container {
-            flex-direction: column;
-            gap: 12px;
+            grid-template-columns: 1fr;
+            margin: 20px 0;
+          }
+          .role-choice {
+            min-height: 128px;
+            padding: 18px 28px;
+          }
+          .role-choice-title {
+            font-size: 23px;
+          }
+          .role-choice + .role-choice {
+            border-top: 1px solid rgba(255, 248, 245, 0.42);
+            border-left: 0;
           }
         }
       `}</style>
-      
+
       {/* 返回前一步按鈕 */}
       {step === 2 && (
         <button 
@@ -247,171 +628,132 @@ export default function Login({ onLogin }) {
             zIndex: 10
           }}
         >
-          ⬅️ 重新選擇身份
+          重新選擇身份
         </button>
       )}
 
       {/* 頂部標題區 */}
       <div style={{ marginBottom: '24px', textAlign: 'center' }}>
-        <h1 style={{ fontSize: '36px', margin: '0 0 4px 0', color: colors.primary, fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-          <span>💅</span> Nail Lab
+        <h1 style={{ fontSize: '36px', margin: '0 0 4px 0', color: '#fff8f5', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+          <img
+            src="/nail-lab-logo.png"
+            alt="Nail Lab Logo"
+            style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+          />
+          Nail Lab
         </h1>
-        <p style={{ fontSize: '13px', color: colors.secondary, margin: 0, letterSpacing: '2px', fontWeight: '500' }}>專業美甲預約管理平台</p>
+        <p style={{ fontSize: '13px', color: 'rgba(255,248,245,0.74)', margin: 0, letterSpacing: '2px', fontWeight: '500' }}>專業美甲預約管理平台</p>
       </div>
 
-      <div className="login-card">
-        
-        {/* ================= 階段 1：選擇身份 ================= */}
-        {step === 1 && (
-          <div style={{ textAlign: 'center' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: '#1a1a1a', margin: '0 0 20px 0' }}>選擇你的身份</h2>
-            
-            <div className="role-box-container">
-              {/* 消費者選項 */}
-              <div 
-                onClick={() => handleSelectRole('customer')}
-                style={{ flex: 1, border: '1px solid #eee', borderRadius: '16px', padding: '25px 10px', cursor: 'pointer', transition: 'all 0.2s ease', background: '#fcfcfc', boxSizing: 'border-box' }}
-              >
-                <div style={{ fontSize: '34px', marginBottom: '12px' }}>👱‍♀️</div>
-                <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#333', marginBottom: '4px' }}>消費者</div>
-                <div style={{ fontSize: '11px', color: '#888' }}>預約美甲服務</div>
-              </div>
-
-              {/* 美甲師選項 */}
-              <div 
-                onClick={() => handleSelectRole('stylist')}
-                style={{ flex: 1, border: '1px solid #eee', borderRadius: '16px', padding: '25px 10px', cursor: 'pointer', transition: 'all 0.2s ease', background: '#fcfcfc', boxSizing: 'border-box' }}
-              >
-                <div style={{ fontSize: '34px', marginBottom: '12px' }}>💅</div>
-                <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#333', marginBottom: '4px' }}>美甲師</div>
-                <div style={{ fontSize: '11px', color: '#888' }}>管理服務與預約</div>
-              </div>
-            </div>
-            <p style={{ fontSize: '12px', color: '#aaa', margin: 0 }}>點選上方選項即可繼續</p>
-          </div>
-        )}
-
-        {/* ================= 階段 2：輸入帳密 / 註冊表單 ================= */}
-        {step === 2 && (
+      <div className={`login-card${!isPasswordRecovery && step === 1 ? ' role-selection' : ''}`}>
+        {isPasswordRecovery && (
           <div>
             <div style={{ marginBottom: '20px', textAlign: 'center' }}>
               <span style={{ fontSize: '11px', background: colors.background, color: colors.primary, padding: '3px 10px', borderRadius: '20px', fontWeight: 'bold' }}>
-                {selectedRole === 'stylist' ? '✨ 美甲師端' : '👤 消費者端'}
+                帳號安全
               </span>
               <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#1a1a1a', margin: '8px 0 0 0' }}>
-                {isRegister ? '建立新帳號' : '密碼安全登入'}
+                設定新密碼
               </h2>
             </div>
 
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              
-              {isRegister && (
-                <div style={{ textAlign: 'left' }}>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>
-                    {selectedRole === 'stylist' ? '沙龍 / 工作室名稱 *' : '您的姓名 / 暱稱 *'}
-                  </label>
-                  <input 
-                    type="text" placeholder="此欄位為必填" value={name} onChange={(e) => setName(e.target.value)}
-                    style={{ width: '100%', padding: '11px 14px', border: '1px solid #ddd', borderRadius: '10px', fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
-                  />
-                </div>
-              )}
-
-              {/* 美甲師註冊專用：服務地區選單 */}
-              {isRegister && selectedRole === 'stylist' && (
-                <div style={{ textAlign: 'left' }}>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>
-                    📍 經營/服務地區 *
-                  </label>
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    
-                    <select
-                      value={selectedCity}
-                      onChange={handleCityChange}
-                      style={{ 
-                        flex: 1, padding: '11px 14px', border: '1px solid #ddd', borderRadius: '10px', 
-                        fontSize: '14px', background: '#fff', outline: 'none', cursor: 'pointer', color: '#333', minWidth: 0
-                      }}
-                    >
-                      {Object.keys(regionData).map(city => (
-                        <option key={city} value={city}>{city}</option>
-                      ))}
-                    </select>
-
-                    <select
-                      value={selectedDistrict}
-                      onChange={(e) => setSelectedDistrict(e.target.value)}
-                      style={{ 
-                        flex: 1, padding: '11px 14px', border: '1px solid #ddd', borderRadius: '10px', 
-                        fontSize: '14px', background: '#fff', outline: 'none', cursor: 'pointer', color: '#333', minWidth: 0
-                      }}
-                    >
-                      {regionData[selectedCity].map(dist => (
-                        <option key={dist} value={dist}>{dist}</option>
-                      ))}
-                    </select>
-
-                  </div>
-                </div>
-              )}
-
+            <form onSubmit={handleRecoverySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ textAlign: 'left' }}>
-                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>手機號碼 / 信箱 *</label>
-                {/* 🔒 註冊模式下：帳號輸入框與發送按鈕並排 */}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input 
-                    type="text" placeholder="請輸入手機號碼或信箱" value={account} onChange={(e) => setAccount(e.target.value)}
-                    style={{ flex: 1, padding: '11px 14px', border: '1px solid #ddd', borderRadius: '10px', fontSize: '14px', boxSizing: 'border-box', outline: 'none', minWidth: 0 }}
-                  />
-                  {isRegister && (
-                    <button
-                      type="button"
-                      onClick={handleSendOtp}
-                      disabled={countdown > 0}
-                      style={{ 
-                        padding: '0 15px', background: countdown > 0 ? '#ccc' : colors.secondary, color: '#fff', 
-                        border: 'none', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', cursor: countdown > 0 ? 'not-allowed' : 'pointer',
-                        whiteSpace: 'nowrap'
-                      }}
-                    >
-                      {countdown > 0 ? `${countdown}s 後重發` : '獲取驗證碼'}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* 🔒 註冊模式且已發送驗證碼時才顯示的「驗證碼輸入框」 */}
-              {isRegister && isOtpSent && (
-                <div style={{ textAlign: 'left' }}>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>🤖 輸入4位數驗證碼 *</label>
-                  <input 
-                    type="text" placeholder="請輸入 1234 測試" value={otpCode} maxLength={4} onChange={(e) => setOtpCode(e.target.value)}
-                    style={{ width: '100%', padding: '11px 14px', border: `1px solid ${colors.secondary}`, borderRadius: '10px', fontSize: '14px', boxSizing: 'border-box', outline: 'none', background: '#fff5f5', fontWeight: 'bold', letterSpacing: '4px' }}
-                  />
-                </div>
-              )}
-
-              <div style={{ textAlign: 'left' }}>
-                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>密碼 *</label>
-                <input 
-                  type="password" placeholder="請輸入密碼" value={password} onChange={(e) => setPassword(e.target.value)}
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>新密碼 *</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="至少 8 個字元"
+                  value={recoveryPassword}
+                  onChange={(event) => setRecoveryPassword(event.target.value)}
                   style={{ width: '100%', padding: '11px 14px', border: '1px solid #ddd', borderRadius: '10px', fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
                 />
               </div>
-
-              <button 
-                type="submit"
-                style={{ width: '100%', padding: '12px', background: colors.primary, color: '#fff', border: 'none', borderRadius: '25px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '8px', boxShadow: '0 4px 12px rgba(86,10,12,0.15)' }}
-              >
-                {isRegister ? '完成註冊並登入' : '登入系統'}
+              <div style={{ textAlign: 'left' }}>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>再次輸入新密碼 *</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="再次輸入新密碼"
+                  value={recoveryPasswordConfirm}
+                  onChange={(event) => setRecoveryPasswordConfirm(event.target.value)}
+                  style={{ width: '100%', padding: '11px 14px', border: '1px solid #ddd', borderRadius: '10px', fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
+                />
+              </div>
+              <button type="submit" style={{ width: '100%', padding: '12px', background: colors.primary, color: '#fff', border: 'none', borderRadius: '25px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '8px' }}>
+                儲存新密碼
               </button>
             </form>
+          </div>
+        )}
+        
+        {/* ================= 階段 1：選擇身份 ================= */}
+        {!isPasswordRecovery && step === 1 && (
+          <div style={{ textAlign: 'center' }}>
+            <h2 className="role-selection-title" style={{ fontSize: '22px', fontWeight: 'bold', margin: 0 }}>選擇你的身份</h2>
+            
+            <div className="role-box-container">
+              {/* 消費者選項 */}
+              <button
+                type="button"
+                className="role-choice"
+                onClick={() => handleSelectRole('customer')}
+              >
+                <span className="role-choice-title">消費者</span>
+                <span className="role-choice-description">探索店家並預約美甲服務</span>
+              </button>
 
-            <div style={{ textAlign: 'center', marginTop: '18px', fontSize: '13px', color: '#666' }}>
-              {isRegister ? (
-                <span>已經有帳號了？ <button type="button" onClick={() => setIsRegister(false)} style={{ background: 'none', border: 'none', color: colors.secondary, fontWeight: 'bold', cursor: 'pointer', padding: 0 }}>按此登入</button></span>
-              ) : (
-                <span>第一次使用嗎？ <button type="button" onClick={() => setIsRegister(true)} style={{ background: 'none', border: 'none', color: colors.secondary, fontWeight: 'bold', cursor: 'pointer', padding: 0 }}>免費註冊帳號</button></span>
+              {/* 美甲師選項 */}
+              <button
+                type="button"
+                className="role-choice"
+                onClick={() => handleSelectRole('stylist')}
+              >
+                <span className="role-choice-title">美甲師</span>
+                <span className="role-choice-description">管理服務、班表與顧客預約</span>
+              </button>
+            </div>
+            <p className="role-selection-hint" style={{ fontSize: '12px', margin: 0 }}>選擇身份後即可繼續</p>
+          </div>
+        )}
+
+        {/* ================= 階段 2：LINE 登入 ================= */}
+        {!isPasswordRecovery && step === 2 && (
+          <div>
+            <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+              <span style={{ fontSize: '11px', background: colors.background, color: colors.primary, padding: '3px 10px', borderRadius: '20px', fontWeight: 'bold' }}>
+                {selectedRole === 'stylist' ? '美甲師端' : '消費者端'}
+              </span>
+              <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff8f5', margin: '8px 0 0 0' }}>
+                LINE 登入
+              </h2>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <button type="button" className="line-login-button" onClick={handleLineLogin}>
+                <span className="line-login-mark">LINE</span>
+                使用 LINE 登入 / 綁定
+              </button>
+
+              {import.meta.env.DEV && (
+                <button type="button" className="demo-login-button" onClick={handleDemoLogin}>
+                  本機展示模式直接進入
+                </button>
+              )}
+
+              {formMessage && (
+                <div style={{
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  background: formMessage.includes('成功') || formMessage.includes('已寄出') ? '#eef8f0' : '#fff5f5',
+                  color: formMessage.includes('成功') || formMessage.includes('已寄出') ? '#226b35' : colors.primary,
+                  border: `1px solid ${formMessage.includes('成功') || formMessage.includes('已寄出') ? '#c9e9d0' : '#f0c8cc'}`,
+                  fontSize: '12px',
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre-line'
+                }}>
+                  {formMessage}
+                </div>
               )}
             </div>
           </div>

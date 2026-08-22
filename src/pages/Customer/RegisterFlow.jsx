@@ -21,12 +21,12 @@ function RegisterFlow() {
   };
 
   return (
-    <div style={{ maxWidth: '375px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif', background: '#fff', minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+    <div style={{ maxWidth: '375px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif', background: 'transparent', minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
       
       {/* ─── STEP 1: 登入主頁 ─── */}
       {step === 1 && (
         <div style={{ textAlign: 'center', marginTop: '100px' }}>
-          <div style={{ fontSize: '50px', marginBottom: '10px' }}>⭐</div>
+          <div style={{ fontSize: '36px', marginBottom: '10px' }}>N</div>
           <h1 style={{ margin: 0, fontSize: '32px', fontWeight: 'bold', color: '#1a1a1a' }}>NailLink</h1>
           <p style={{ color: '#888', fontSize: '14px', marginTop: '5px' }}>專業美甲預約與工作室管理平台</p>
           
@@ -35,7 +35,7 @@ function RegisterFlow() {
               💼 我是美甲師 / 註冊入駐
             </button>
             <button onClick={() => setStep(2)} style={{ width: '100%', padding: '15px', background: '#f4f5f7', color: '#1a1a1a', border: 'none', borderRadius: '25px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
-              🔍 尋找美甲工作室
+              尋找美甲工作室
             </button>
           </div>
         </div>
@@ -49,7 +49,7 @@ function RegisterFlow() {
           
           {/* 大頭貼預留區 */}
           <div style={{ textAlignment: 'center', margin: '30px 0', display: 'flex', justifyContent: 'center' }}>
-            <div style={{ width: '90px', height: '90px', borderRadius: '50%', background: '#e4e6eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '30px' }}>👤</div>
+            <div style={{ width: '90px', height: '90px', borderRadius: '50%', background: '#e4e6eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '30px' }}>N</div>
           </div>
 
           <div style={{ marginBottom: '20px' }}>
@@ -74,7 +74,7 @@ function RegisterFlow() {
             {availableStyles.map((style) => {
               const isSelected = selectedStyles.includes(style);
               return (
-                <button key={style} onClick={() => toggleStyle(style)} style={{ padding: '10px 20px', borderRadius: '20px', border: isSelected ? 'none' : '1px solid #ddd', background: isSelected ? '#5a189a' : '#fff', color: isSelected ? '#fff' : '#1a1a1a', fontSize: '14px', cursor: 'pointer', transition: 'all 0.2s' }}>
+                <button key={style} onClick={() => toggleStyle(style)} style={{ padding: '10px 20px', borderRadius: '20px', border: isSelected ? 'none' : '1px solid rgba(255, 248, 245, 0.28)', background: isSelected ? '#5a189a' : 'rgba(255, 248, 245, 0.16)', color: isSelected ? '#fff' : '#fff8f5', fontSize: '14px', cursor: 'pointer', transition: 'all 0.2s' }}>
                   {style}
                 </button>
               );
@@ -82,7 +82,7 @@ function RegisterFlow() {
           </div>
 
           <div style={{ display: 'flex', gap: '15px', marginTop: '150px' }}>
-            <button onClick={() => setStep(2)} style={{ flex: 1, padding: '15px', background: '#fff', color: '#666', border: '1px solid #ddd', borderRadius: '25px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
+            <button onClick={() => setStep(2)} style={{ flex: 1, padding: '15px', background: 'rgba(255, 248, 245, 0.16)', color: '#fff8f5', border: '1px solid rgba(255, 248, 245, 0.28)', borderRadius: '25px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
               返回
             </button>
             <button onClick={() => alert(`註冊成功！歡迎 ${name}，你選擇了：${selectedStyles.join(', ')}`)} style={{ flex: 2, padding: '15px', background: '#5a189a', color: '#fff', border: 'none', borderRadius: '25px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>

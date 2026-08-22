@@ -44,7 +44,7 @@ function CustomerBookingFlow({ stylistSchedule = {}, onSubmitBooking, onBack }) 
     // 建立新資料物件
     const newBookingItem = {
       id: generatedId,
-      studio: '暮色美甲沙龍', // 🎯 修正：與主畫面的初始推薦保持一致
+      studio: 'yyc nail',
       service: selectedServices.map(s => s.name).join(' + '),
       price: `$${totalPrice.toLocaleString()}`,
       date: bookingDate,
@@ -52,25 +52,11 @@ function CustomerBookingFlow({ stylistSchedule = {}, onSubmitBooking, onBack }) 
       status: '店家審核中'
     };
 
-    // 讀取並合併現有資料
-    const existingRaw = localStorage.getItem('nail_appointments');
-    let currentList = [];
-    
-    if (existingRaw) {
-      currentList = JSON.parse(existingRaw);
-    }
-
-    // 把最新的預約強塞在陣列最前端
-    currentList.unshift(newBookingItem);
-
-    // 寫入快取
-    localStorage.setItem('nail_appointments', JSON.stringify(currentList));
-
     if (onSubmitBooking) {
       onSubmitBooking(newBookingItem);
     }
 
-    alert(`🎉 預約申請提交成功！\n單號：${generatedId}\n請至「我的帳戶」查看排程狀態。`);
+    alert(`預約申請提交成功！\n單號：${generatedId}\n請至「我的帳戶」查看排程狀態。`);
     
     if (onBack) {
       onBack(); // 點完彈窗後自動切換回原本帳戶或首頁
@@ -78,11 +64,11 @@ function CustomerBookingFlow({ stylistSchedule = {}, onSubmitBooking, onBack }) 
   };
 
   return (
-    <div style={{ padding: '24px', fontFamily: 'sans-serif', background: '#fff', minHeight: '100vh', textAlign: 'left' }}>
+    <div style={{ padding: '24px', fontFamily: 'sans-serif', background: 'transparent', minHeight: '100vh', textAlign: 'left' }}>
       
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
         <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: colors.primary }}>
-          ⬅️
+          ‹
         </button>
         <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: '#1a1a1a' }}>線上預約申請</h2>
       </div>
@@ -100,12 +86,12 @@ function CustomerBookingFlow({ stylistSchedule = {}, onSubmitBooking, onBack }) 
                 style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   padding: '16px', borderRadius: '12px', border: `1px solid ${isChecked ? colors.secondary : '#eee'}`,
-                  background: isChecked ? `${colors.background}33` : '#fff', cursor: 'pointer', transition: 'all 0.2s'
+                  background: isChecked ? `${colors.background}33` : 'rgba(255, 248, 245, 0.14)', cursor: 'pointer', transition: 'all 0.2s'
                 }}
               >
                 <div>
                   <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#333' }}>{item.name}</div>
-                  <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>⏱️ 耗時約 {item.duration} 分鐘</div>
+                  <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>耗時約 {item.duration} 分鐘</div>
                 </div>
                 <div style={{ fontSize: '15px', fontWeight: 'bold', color: colors.primary }}>${item.price}</div>
               </div>

@@ -10,6 +10,7 @@ const colors = {
 
 function StylistServiceSetting({ shop, onUpdateServices, onBack }) {
   const [services, setServices] = useState(shop?.services || []);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setServices(shop?.services || []);
@@ -20,20 +21,54 @@ function StylistServiceSetting({ shop, onUpdateServices, onBack }) {
   };
 
   const addServiceRow = () => {
-    const newId = services.length > 0 ? Number(services[services.length - 1].id.replace(/\D/g, '')) + 1 : 1;
-    setServices([...services, { id: `new-${newId}`, name: '', price: '', duration: '' }]);
+    setServices(prev => [
+      ...prev,
+      { id: `new-${Date.now()}`, name: '', price: '', duration: '60' }
+    ]);
   };
 
-  const handleSave = () => {
-    if (!shop) return;
-    onUpdateServices(shop.id, services);
-    alert('✅ 已儲存服務項目，消費者將可在該工作室頁面看到最新項目。');
+  const removeServiceRow = (id) => {
+    setServices(prev => prev.filter(service => service.id !== id));
+  };
+
+  const handleSave = async () => {
+    const cleanServices = services
+      .map(service => ({
+        ...service,
+        name: service.name?.trim() || '',
+        price: String(service.price ?? '').trim(),
+        duration: String(service.duration ?? '').trim()
+      }))
+      .filter(service => service.name || service.price || service.duration);
+
+    if (cleanServices.length === 0) {
+      alert('請至少保留一個服務項目。');
+      return;
+    }
+
+    const invalidService = cleanServices.find(service => {
+      const price = Number(String(service.price).replace(/[^\d]/g, ''));
+      const duration = Number(service.duration);
+      return !service.name || !Number.isFinite(price) || price <= 0 || !Number.isFinite(duration) || duration <= 0;
+    });
+
+    if (invalidService) {
+      alert('請確認每個服務都有名稱、價格與耗時，價格和耗時都要大於 0。');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      await onUpdateServices(shop?.id, cleanServices);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
-    <div style={{ padding: '16px', fontFamily: 'sans-serif', background: '#fff', minHeight: '100vh' }}>
+    <div style={{ padding: '16px', fontFamily: 'sans-serif', background: 'transparent', minHeight: '100vh' }}>
       <button onClick={onBack} style={{ marginBottom: '20px', background: 'none', border: 'none', color: colors.primary, fontSize: '16px', cursor: 'pointer' }}>
-        ⬅️ 返回工作台
+        返回工作台
       </button>
 
       <div style={{ marginBottom: '25px' }}>
@@ -51,15 +86,34 @@ function StylistServiceSetting({ shop, onUpdateServices, onBack }) {
               <div 
                 key={service.id} 
                 style={{ 
-                  background: '#fdfbfb', 
+                  background: 'rgba(255, 248, 245, 0.58)', 
                   border: `1px solid ${colors.accent}`, 
                   borderRadius: '16px', 
                   padding: '16px',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
                 }}
               >
-                <div style={{ fontSize: '13px', fontWeight: 'bold', color: colors.primary, marginBottom: '10px' }}>
-                  項目 #{index + 1}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 'bold', color: colors.primary }}>
+                    項目 #{index + 1}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeServiceRow(service.id)}
+                    disabled={services.length <= 1 || isSaving}
+                    style={{
+                      border: 'none',
+                      background: services.length <= 1 ? '#eee' : '#fff0f2',
+                      color: services.length <= 1 ? '#aaa' : colors.primary,
+                      borderRadius: '8px',
+                      padding: '6px 10px',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      cursor: services.length <= 1 || isSaving ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    刪除
+                  </button>
                 </div>
 
                 <div style={{ marginBottom: '12px' }}>
@@ -101,6 +155,7 @@ function StylistServiceSetting({ shop, onUpdateServices, onBack }) {
 
           <button 
             onClick={addServiceRow}
+            disabled={isSaving}
             style={{ 
               width: '100%', 
               padding: '12px', 
@@ -110,7 +165,7 @@ function StylistServiceSetting({ shop, onUpdateServices, onBack }) {
               color: colors.secondary, 
               fontSize: '14px', 
               fontWeight: 'bold', 
-              cursor: 'pointer',
+              cursor: isSaving ? 'not-allowed' : 'pointer',
               marginBottom: '24px'
             }}
           >
@@ -119,9 +174,10 @@ function StylistServiceSetting({ shop, onUpdateServices, onBack }) {
 
           <button 
             onClick={handleSave}
-            style={{ width: '100%', padding: '14px', border: 'none', borderRadius: '16px', background: colors.primary, color: '#fff', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer' }}
+            disabled={isSaving}
+            style={{ width: '100%', padding: '14px', border: 'none', borderRadius: '16px', background: isSaving ? '#9b7779' : colors.primary, color: '#fff', fontSize: '15px', fontWeight: 'bold', cursor: isSaving ? 'not-allowed' : 'pointer' }}
           >
-            儲存服務設定
+            {isSaving ? '儲存中...' : '儲存服務設定'}
           </button>
         </>
       ) : (

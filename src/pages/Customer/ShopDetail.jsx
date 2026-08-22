@@ -1,360 +1,558 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { supabase } from '../../lib/supabase';
+import './ShopDetail.css';
 
-const colors = {
-  primary: '#560A0C',     // 奢華酒紅
-  secondary: '#A45D65',   // 乾燥玫瑰
-  accent: '#CCA2A4',      // 暮色粉
-  background: '#EAD4D6',  // 陶瓷粉
-  gray: '#f8f9fa'
-};
+const fallbackImage = 'https://images.unsplash.com/photo-1604654894610-df63bc536371?w=1200&auto=format&fit=crop';
+const defaultReviews = [
+  {
+    id: 'default-review-1',
+    name: '王小姐',
+    rating: 5,
+    comment: '溝通很細心，修型跟顏色都很乾淨，整體服務很舒服。',
+    date: '2026-06-03'
+  },
+  {
+    id: 'default-review-2',
+    name: '林小姐',
+    rating: 4.8,
+    comment: '貓眼折射很漂亮，工作室氣氛安靜，會想再回訪。',
+    date: '2026-06-01'
+  }
+];
 
-export default function ShopDetail({ studioName, rules, portfolioImages, onBack, onSubmitBooking }) {
-  const [activeTab, setActiveTab] = useState('portfolio');
-  const [showBookingModal, setShowBookingModal] = useState(false);
+function localDateString(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 
-  // ================= 🛒 預約狀態機 (連動步驟核心) =================
-  const [selectedService, setSelectedService] = useState(null); // 已選款式項目
-  const [selectedDate, setSelectedDate] = useState('');         // 已選日期
-  const [selectedTime, setSelectedTime] = useState('');         // 已選時間
+export default function ShopDetail({ studio, onBack, onSubmitBooking }) {
+  const [selectedService, setSelectedService] = useState(null);
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState('');
+  const [previewImageIndex, setPreviewImageIndex] = useState(null);
+  const [slotAvailability, setSlotAvailability] = useState({});
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('LINE Pay');
+  const [styleRequest, setStyleRequest] = useState('');
+  const [customerNote, setCustomerNote] = useState('');
+  const [contactInfo, setContactInfo] = useState('');
+  const [needsRemoval, setNeedsRemoval] = useState(false);
+  const [allergyNote, setAllergyNote] = useState('');
+  const [customerReviews, setCustomerReviews] = useState(defaultReviews);
+  const [reviewName, setReviewName] = useState('');
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
 
-  // 🌟 核心防呆變數：取得當下系統最新的實際日期與小時
-  const todayObj = new Date();
-  const todayStr = todayObj.toISOString().slice(0, 10); // 格式如: "2026-06-08"
-  const currentHour = todayObj.getHours();             // 取得目前小時 (數字，如 14)
+  const studioName = studio?.name || studio?.studioName || '美甲工作室';
+  const studioAddress = studio?.address || studio?.location || '台北市大安區';
+  const portfolioImages = studio?.portfolioImages || [];
+  const services = studio?.services || [];
+  const availableSchedule = studio?.schedule || {};
+  const today = localDateString();
+  const availableDates = Object.keys(availableSchedule)
+    .filter(date => date >= today && (availableSchedule[date] || []).length > 0)
+    .sort();
+  const [calendarMonth, setCalendarMonth] = useState((availableDates[0] || today).slice(0, 7));
 
-  // 模擬美甲師在後台設定好、有開放預約的動態班表資料庫
-  const availableSchedule = {
-    '2026-06-04': ['09:00', '11:00', '14:00', '15:30', '19:00'],
-    '2026-06-05': ['10:00', '13:00', '14:30', '16:00'],
-    '2026-06-06': ['09:00', '11:00', '13:00', '15:00', '17:00', '20:00'],
-    '2026-06-07': ['14:00', '15:00', '16:00'],
-    // 6/8、6/10、6/11 為可測試與展示過期判斷的核心日期
-    '2026-06-08': ['09:00', '11:00', '14:00', '16:30', '19:30', '21:00'],
-    '2026-06-10': ['10:00', '14:00', '19:00'],
-    '2026-06-11': ['13:00', '15:30']
+  const [calendarYear, calendarMonthNumber] = calendarMonth.split('-').map(Number);
+  const monthDayCount = new Date(calendarYear, calendarMonthNumber, 0).getDate();
+  const monthStartOffset = new Date(calendarYear, calendarMonthNumber - 1, 1).getDay();
+  const monthDays = Array.from({ length: monthDayCount }, (_, index) => index + 1);
+  const previewImage = previewImageIndex === null ? null : portfolioImages[previewImageIndex];
+  const servicePrice = Number(selectedService?.price || 0);
+  const depositSettings = studio?.depositSettings || {};
+  const isDepositRequired = depositSettings.enabled !== false;
+  const depositType = depositSettings.type || 'percent';
+  const depositValue = Number(depositSettings.value || 30);
+  const refundHours = Number(depositSettings.refundHours || 24);
+  const depositAmount = selectedService && isDepositRequired
+    ? Math.min(servicePrice, depositType === 'fixed'
+      ? Math.max(0, depositValue)
+      : Math.max(0, Math.round((servicePrice * depositValue / 100) / 50) * 50))
+    : 0;
+  const remainingAmount = Math.max(servicePrice - depositAmount, 0);
+  const reviewStorageKey = `nail-lab-reviews-${studio?.id || studioName}`;
+  const reviewCount = customerReviews.length;
+  const averageRating = reviewCount > 0
+    ? (customerReviews.reduce((total, review) => total + Number(review.rating || 0), 0) / reviewCount).toFixed(1)
+    : (studio.rating || '4.9');
+
+  useEffect(() => {
+    if (!selectedService || !selectedDate) {
+      setSlotAvailability({});
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadSlots = async () => {
+      setIsLoadingSlots(true);
+      const fallback = Object.fromEntries((availableSchedule[selectedDate] || []).map(slot => [slot, true]));
+      const { data, error } = await supabase.rpc('get_available_slots', {
+        p_shop_id: studio.id,
+        p_work_date: selectedDate,
+        p_duration_minutes: Number(selectedService.duration || 60)
+      });
+
+      if (cancelled) return;
+      setSlotAvailability(error
+        ? fallback
+        : Object.fromEntries((data || []).map(item => [item.slot, item.is_available]))
+      );
+      setIsLoadingSlots(false);
+    };
+
+    loadSlots();
+    return () => { cancelled = true; };
+  }, [availableSchedule, selectedDate, selectedService, studio.id]);
+
+  useEffect(() => {
+    try {
+      const savedReviews = JSON.parse(window.localStorage.getItem(reviewStorageKey) || '[]');
+      setCustomerReviews(savedReviews.length > 0 ? savedReviews : defaultReviews);
+    } catch {
+      setCustomerReviews(defaultReviews);
+    }
+  }, [reviewStorageKey]);
+
+  const selectService = (service) => {
+    setSelectedService(service);
+    setSelectedTime('');
+    if (!selectedDate && availableDates[0]) {
+      setSelectedDate(availableDates[0]);
+      setCalendarMonth(availableDates[0].slice(0, 7));
+    }
   };
 
-  // 點擊預約按鈕時的防呆檢查
-  const handleOpenBooking = () => {
-    if (!selectedService) {
-      alert('請先在下方「服務項目價目表」中點擊選擇您想做的款式種類唷！');
-      setActiveTab('services'); // 自動幫消費者切換到價目表分頁
-      return;
-    }
-    setShowBookingModal(true);
-    // 貼心聯動：開啟彈窗時，預設自動選取今天（防呆如果今天已經過期，則不預選）
-    if (availableSchedule[todayStr]) {
-      setSelectedDate(todayStr);
-    }
-  };
-
-  // 處理最終提交
-  const handleFinalSubmit = () => {
-    if (!selectedDate || !selectedTime) {
-      alert('請先選擇預約的日期與時間！');
-      return;
-    }
-    setShowBookingModal(false);
-    // 呼叫 App.jsx 的預約成功回呼
-    onSubmitBooking({
-      service: selectedService,
-      date: selectedDate,
-      time: selectedTime
-    });
-    // 重置選擇狀態
-    setSelectedService(null);
+  const changeMonth = (offset) => {
+    const nextMonth = new Date(calendarYear, calendarMonthNumber - 1 + offset, 1);
+    setCalendarMonth(`${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`);
     setSelectedDate('');
     setSelectedTime('');
   };
 
-  // 📅 簡單手寫一個 2026 年 6 月份的 RWD 日曆格子陣列
-  const juneDays = Array.from({ length: 30 }, (_, i) => i + 1);
+  const submitBooking = async () => {
+    if (!selectedService || !selectedDate || !selectedTime) return;
+    setIsSubmitting(true);
+    const didSubmit = await onSubmitBooking({
+      serviceId: selectedService.id,
+      service: selectedService.name,
+      price: `$${Number(selectedService.price || 0).toLocaleString()}`,
+      duration: Number(selectedService.duration || 60),
+      depositAmount,
+      remainingAmount,
+      depositPaid: true,
+      paymentMethod,
+      styleRequest,
+      customerNote,
+      contactInfo,
+      needsRemoval,
+      allergyNote,
+      date: selectedDate,
+      time: selectedTime
+    });
+    setIsSubmitting(false);
+
+    if (didSubmit) {
+      setSelectedService(null);
+      setSelectedDate('');
+      setSelectedTime('');
+      setStyleRequest('');
+      setCustomerNote('');
+      setContactInfo('');
+      setNeedsRemoval(false);
+      setAllergyNote('');
+      setIsDepositModalOpen(false);
+    }
+  };
+
+  const submitReview = (event) => {
+    event.preventDefault();
+    const cleanComment = reviewComment.trim();
+    if (!cleanComment) return;
+
+    const nextReview = {
+      id: `review-${Date.now()}`,
+      name: reviewName.trim() || '匿名顧客',
+      rating: Number(reviewRating),
+      comment: cleanComment,
+      date: localDateString()
+    };
+    const nextReviews = [nextReview, ...customerReviews];
+    setCustomerReviews(nextReviews);
+    window.localStorage.setItem(reviewStorageKey, JSON.stringify(nextReviews));
+    setReviewName('');
+    setReviewRating(5);
+    setReviewComment('');
+  };
+
+  const canSubmit = selectedService && selectedDate && selectedTime && !isSubmitting;
 
   return (
-    <div style={{ width: '100%', padding: '10px 0', boxSizing: 'border-box' }}>
-      
-      {/* 🔮 注入 RWD 雙欄與極簡日曆、時間顆粒樣式 */}
-      <style>{`
-        .detail-container { background: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 8px 30px rgba(86,10,12,0.05); margin-top: 16px; }
-        .shop-header-banner { width: 100%; height: 260px; position: relative; background: #444; }
-        .content-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 24px; }
-        .full-width-layout { padding: 24px; }
-        .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
-        
-        /* 服務款式項目卡片點選樣式 */
-        .service-item-card {
-          display: flex; justify-content: space-between; align-items: center; padding: 14px; 
-          border: 2px solid #eee; border-radius: 12px; margin-bottom: 12px; cursor: pointer; transition: all 0.2s;
-        }
-        .service-item-card:hover { border-color: ${colors.accent}; background: #FFF9FA; }
-        .service-item-card.selected { border-color: ${colors.primary}; background: #F9ECEE; }
+    <div className="booking-page">
+      <button className="back-link" type="button" onClick={onBack}>‹ 返回探索</button>
 
-        /* 📅 日曆網格樣式 */
-        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 10px; }
-        .calendar-day-header { text-align: center; font-size: 11px; font-weight: bold; color: #999; padding: 4px 0; }
-        .calendar-day-cell {
-          aspect-ratio: 1; border-radius: 8px; display: flex; flex-direction: column; align-items: center; 
-          justify-content: center; font-size: 13px; font-weight: bold; cursor: pointer; border: 1px solid transparent; transition: all 0.2s;
-        }
-        .day-has-slots { background: #FFF0F2; color: ${colors.primary}; }
-        .day-has-slots:hover { background: ${colors.accent}; color: #fff; }
-        .day-no-slots { background: #f8f9fa; color: #ccc; cursor: not-allowed; font-weight: normal; opacity: 0.4; }
-        .day-selected { background: ${colors.primary} !important; color: #fff !important; box-shadow: 0 4px 10px rgba(86,10,12,0.3); }
-
-        /* ⏰ 時間按鈕顆粒樣式 */
-        .time-slots-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
-        .time-chip {
-          padding: 8px 4px; text-align: center; border-radius: 8px; border: 1px solid #ddd; background: #fff;
-          font-size: 13px; font-weight: bold; color: #555; cursor: pointer; transition: all 0.15s;
-        }
-        .time-chip:hover { border-color: ${colors.primary}; color: ${colors.primary}; background: #FFF9FA; }
-        .time-chip.selected { background: ${colors.primary}; color: #fff; border-color: ${colors.primary}; }
-        
-        /* 🚫 時間過期禁用狀態 */
-        .time-chip-disabled {
-          background: #e2e8f0 !important; color: #94a3b8 !important; border-color: #eee !important;
-          cursor: not-allowed !important; text-decoration: line-through;
-        }
-
-        @media (max-width: 768px) {
-          .shop-header-banner { height: 180px; }
-          .content-layout { grid-template-columns: 1fr; gap: 16px; padding: 16px; }
-          .full-width-layout { padding: 16px; }
-          .portfolio-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; }
-          .time-slots-container { grid-template-columns: repeat(3, 1fr); }
-        }
-      `}</style>
-
-      {/* 返回按鈕 */}
-      <div style={{ textAlign: 'left' }}>
-        <button onClick={onBack} style={{ background: '#fff', border: `1px solid ${colors.accent}`, padding: '8px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: 'bold', color: colors.primary, cursor: 'pointer' }}>
-          ⬅️ 返回探索首頁
-        </button>
-      </div>
-
-      <div className="detail-container">
-        
-        {/* 店鋪大門面大橫幅 */}
-        <div className="shop-header-banner">
-          <img src={portfolioImages[0] || "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=800"} alt="封面" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.9 }} />
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0.2), rgba(0,0,0,0.65))' }} />
-          
-          <div style={{ position: 'absolute', bottom: '20px', left: '24px', right: '24px', color: '#fff' }}>
-            <span style={{ background: colors.secondary, fontSize: '12px', padding: '3px 10px', borderRadius: '12px', fontWeight: 'bold', marginBottom: '8px', display: 'inline-block' }}>
-              ⭐ 4.9 精選美甲沙龍
-            </span>
-            <h2 style={{ margin: '4px 0', fontSize: '28px', fontWeight: 'bold', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
-              {studioName}
-            </h2>
-            <p style={{ margin: 0, fontSize: '14px', opacity: 0.9 }}>📍 台北市大安區 ｜ ⏰ 採預約審核制</p>
+      <header className="studio-profile">
+        <div className="studio-profile-copy">
+          <div className="studio-kicker">精選美甲工作室</div>
+          <h1>{studioName}</h1>
+          <p>{studioAddress} · ★ {averageRating} · 預約審核制</p>
+          <div className="studio-tags">
+            {(studio.tags || []).map(tag => <span key={tag}>{tag}</span>)}
           </div>
         </div>
+      </header>
 
-        {/* 🧭 分頁分流導覽列 */}
-        <div style={{ display: 'flex', borderBottom: '1px solid #eee', background: '#fff' }}>
-          <button onClick={() => setActiveTab('portfolio')} style={{ padding: '16px 24px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', background: 'none', border: 'none', color: activeTab === 'portfolio' ? colors.primary : '#666', borderBottom: activeTab === 'portfolio' ? `3px solid ${colors.primary}` : 'none' }}>
-            ✨ 作品精選 & 預約須知
-          </button>
-          <button onClick={() => setActiveTab('services')} style={{ padding: '16px 24px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', background: 'none', border: 'none', color: activeTab === 'services' ? colors.primary : '#666', borderBottom: activeTab === 'services' ? `3px solid ${colors.primary}` : 'none' }}>
-            💅 步驟1：選擇服務項目 {selectedService ? '✅' : ''}
-          </button>
+      <section className="booking-section gallery-section" aria-labelledby="gallery-title">
+        <div className="booking-section-heading">
+          <div>
+            <span className="step-label">作品</span>
+            <h2 id="gallery-title">現場作品精選</h2>
+          </div>
+          <span className="section-meta">{portfolioImages.length} 張</span>
         </div>
 
-        {/* 內容區塊 */}
-        {activeTab === 'portfolio' ? (
-          <div className="content-layout">
-            <div style={{ background: '#fcfcfc', padding: '20px', borderRadius: '12px', border: '1px solid #f0f0f0' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', fontWeight: 'bold', color: colors.primary }}>📜 店家預約須知</h3>
-              <div style={{ fontSize: '14px', color: '#444', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{rules}</div>
-            </div>
-
-            <div style={{ background: '#fcfcfc', padding: '20px', borderRadius: '12px', border: '1px solid #f0f0f0' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', fontWeight: 'bold', color: colors.primary }}>🖼️ 現場作品精選 ({portfolioImages.length} 張)</h3>
-              <div className="portfolio-grid">
-                {portfolioImages.map((url, idx) => (
-                  <div key={idx} style={{ width: '100%', aspectRatio: '1', borderRadius: '8px', overflow: 'hidden' }}>
-                    <img src={url} alt="作品" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  </div>
-                ))}
-              </div>
-            </div>
+        {portfolioImages.length > 0 ? (
+          <div className="portfolio-strip">
+            {portfolioImages.map((url, index) => (
+              <button key={url} type="button" onClick={() => setPreviewImageIndex(index)} aria-label={`查看作品 ${index + 1}`}>
+                <img src={url} alt={`美甲作品 ${index + 1}`} onError={event => { event.currentTarget.src = fallbackImage; }} />
+              </button>
+            ))}
           </div>
         ) : (
-          /* 款式項目選擇清單 */
-          <div className="full-width-layout">
-            <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-              <div style={{ background: '#FFF0F2', color: colors.primary, padding: '10px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'center' }}>
-                💡 請先點選一個您今天想要預約做的款式，再點擊底部按鈕挑選日子時間唷！
-              </div>
-              
-              {/* 款式項目一 */}
-              <div 
-                className={`service-item-card ${selectedService === '單色凝膠美甲' ? 'selected' : ''}`}
-                onClick={() => setSelectedService('單色凝膠美甲')}
-              >
-                <div>
-                  <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#333' }}>
-                    {selectedService === '單色凝膠美甲' ? '🎯 ' : ''}單色凝膠美甲
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>⏰ 所需時間：約 90 分鐘 ｜ 含基礎細緻指緣去皮與保養</div>
-                </div>
-                <span style={{ fontSize: '16px', fontWeight: 'bold', color: colors.primary }}>$1,399</span>
-              </div>
-
-              {/* 款式項目二 */}
-              <div 
-                className={`service-item-card ${selectedService === '法式優雅彩繪' ? 'selected' : ''}`}
-                onClick={() => setSelectedService('法式優雅彩繪')}
-              >
-                <div>
-                  <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#333' }}>
-                    {selectedService === '法式優雅彩繪' ? '🎯 ' : ''}法式優雅彩繪
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>⏰ 所需時間：約 120 分鐘 ｜ 精緻經典拉線與晶亮建構增厚</div>
-                </div>
-                <span style={{ fontSize: '16px', fontWeight: 'bold', color: colors.primary }}>$1,599</span>
-              </div>
-
-              {/* 顯示目前選擇提示 */}
-              {selectedService && (
-                <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '14px', fontWeight: 'bold', color: colors.secondary }}>
-                  已選擇項目：【{selectedService}】✨ 請點選下方按鈕繼續挑選時間
-                </div>
-              )}
-            </div>
-          </div>
+          <div className="inline-empty">店家尚未上傳作品</div>
         )}
+      </section>
 
-        {/* 吸底功能確認列 */}
-        <div style={{ background: '#F9ECEE', padding: '20px', textAlign: 'center', borderTop: '1px solid #eee' }}>
-          <button 
-            onClick={handleOpenBooking}
-            style={{ 
-              background: colors.primary, color: '#fff', border: 'none', padding: '14px 50px', borderRadius: '30px',
-              fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 14px rgba(86,10,12,0.25)'
-            }}
-          >
-            {selectedService ? `下一步：選擇【${selectedService}】的時間 🗓️` : '請先點選款式項目 💅'}
-          </button>
+      <section className="booking-section review-section" aria-labelledby="review-title">
+        <div className="booking-section-heading">
+          <div>
+            <span className="step-label">評價</span>
+            <h2 id="review-title">顧客評論</h2>
+          </div>
+          <span className="section-meta">{reviewCount} 則</span>
         </div>
 
-      </div>
+        <div className="review-summary">
+          <div className="review-score">
+            <strong>{averageRating}</strong>
+            <span>平均評分</span>
+          </div>
+          <div className="review-stars" aria-label={`平均 ${averageRating} 星`}>
+            {[1, 2, 3, 4, 5].map(star => (
+              <span key={star} className={star <= Math.round(Number(averageRating)) ? 'active' : ''}>★</span>
+            ))}
+          </div>
+        </div>
 
-      {/* ================= 🗓️ 核心升級：全新互動式 RWD 日曆彈出視窗 ================= */}
-      {showBookingModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 9999 }}>
-          <div style={{ background: '#fff', padding: '24px', borderRadius: '20px', maxWidth: '420px', width: '100%', boxSizing: 'border-box', boxShadow: '0 12px 36px rgba(0,0,0,0.2)' }}>
-            
-            {/* 彈窗標題與已選款式摘要 */}
-            <div style={{ textAlign: 'center', marginBottom: '14px' }}>
-              <h4 style={{ margin: '0 0 4px 0', color: colors.primary, fontSize: '18px', fontWeight: 'bold' }}>選擇預約日期與時間</h4>
-              <span style={{ fontSize: '12px', background: '#f5f5f5', padding: '2px 10px', borderRadius: '10px', color: '#666' }}>
-                項目：{selectedService}
-              </span>
-            </div>
+        <form className="review-form" onSubmit={submitReview}>
+          <div className="rating-picker" aria-label="選擇評分">
+            {[5, 4, 3, 2, 1].map(rating => (
+              <button
+                key={rating}
+                type="button"
+                className={reviewRating === rating ? 'selected' : ''}
+                onClick={() => setReviewRating(rating)}
+              >
+                {rating} 星
+              </button>
+            ))}
+          </div>
+          <input
+            value={reviewName}
+            onChange={event => setReviewName(event.target.value)}
+            placeholder="你的暱稱（可不填）"
+          />
+          <textarea
+            value={reviewComment}
+            onChange={event => setReviewComment(event.target.value)}
+            rows="3"
+            placeholder="分享這次服務、款式溝通或工作室感受"
+          />
+          <button className="review-submit" type="submit" disabled={!reviewComment.trim()}>
+            送出評論
+          </button>
+        </form>
 
-            {/* 📅 1. 日曆介面卡片 */}
-            <div style={{ border: '1px solid #eee', padding: '12px', borderRadius: '14px', background: '#fff' }}>
-              <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px', color: '#333', marginBottom: '10px' }}>
-                ◀ 2026 年 6 月 ▶
+        <div className="review-list">
+          {customerReviews.map(review => (
+            <article className="review-card" key={review.id}>
+              <header>
+                <div>
+                  <strong>{review.name}</strong>
+                  <span>{Number(review.rating).toFixed(1)} 星</span>
+                </div>
+                <time>{review.date}</time>
+              </header>
+              <p>{review.comment}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="booking-section" aria-labelledby="service-title">
+        <div className="booking-section-heading">
+          <div>
+            <span className="step-label">步驟 1</span>
+            <h2 id="service-title">選擇服務</h2>
+          </div>
+          <span className="section-meta">單選</span>
+        </div>
+
+        <div className="service-list">
+          {services.map(service => {
+            const isSelected = selectedService?.id === service.id;
+            return (
+              <button
+                key={service.id}
+                type="button"
+                className={isSelected ? 'service-row selected' : 'service-row'}
+                aria-pressed={isSelected}
+                onClick={() => selectService(service)}
+              >
+                <span className="service-select-mark" aria-hidden="true">{isSelected ? '✓' : ''}</span>
+                <span className="service-copy">
+                  <strong>{service.name}</strong>
+                  <small>約 {service.duration || 60} 分鐘</small>
+                </span>
+                <strong className="service-price">NT${Number(service.price || 0).toLocaleString()}</strong>
+              </button>
+            );
+          })}
+          {services.length === 0 && <div className="inline-empty">店家尚未設定服務項目</div>}
+        </div>
+      </section>
+
+      <section className={selectedService ? 'booking-section' : 'booking-section muted-section'} aria-labelledby="date-title">
+        <div className="booking-section-heading">
+          <div>
+            <span className="step-label">步驟 2</span>
+            <h2 id="date-title">選擇日期與時段</h2>
+          </div>
+          {selectedService && <span className="section-meta">{selectedService.name}</span>}
+        </div>
+
+        {!selectedService ? (
+          <div className="inline-empty">先選擇一個服務，才會顯示可預約時段。</div>
+        ) : (
+          <div className="schedule-layout">
+            <div className="calendar-panel">
+              <div className="calendar-toolbar">
+                <button type="button" onClick={() => changeMonth(-1)} aria-label="上個月">‹</button>
+                <strong>{calendarYear} 年 {calendarMonthNumber} 月</strong>
+                <button type="button" onClick={() => changeMonth(1)} aria-label="下個月">›</button>
               </div>
-              
-              <div className="calendar-grid">
-                {/* 星期行 */}
-                {['日', '一', '二', '三', '四', '五', '六'].map((w, idx) => (
-                  <div key={idx} className="calendar-day-header">{w}</div>
-                ))}
-                
-                {/* 補齊 2026/06/01 前面的空白格 */}
-                <div className="calendar-day-cell day-no-slots"></div>
-
-                {/* 動態渲染三十天 */}
-                {juneDays.map((day) => {
-                  const dateStr = `2026-06-${day < 10 ? '0' + day : day}`;
-                  
-                  // 🎯 防呆判斷 A：如果日期字串小於今天 (2026-06-08)，代表是過去的日期
-                  const isPastDay = dateStr < todayStr;
-                  
-                  // 只有非過去日期且班表庫有開放，才算有診/有時段
-                  const hasSlots = !isPastDay && !!availableSchedule[dateStr];
-                  const isSelected = selectedDate === dateStr;
-
+              <div className="booking-calendar">
+                {['日', '一', '二', '三', '四', '五', '六'].map(day => <span className="weekday" key={day}>{day}</span>)}
+                {Array.from({ length: monthStartOffset }, (_, index) => <span key={`blank-${index}`} />)}
+                {monthDays.map(day => {
+                  const date = `${calendarMonth}-${String(day).padStart(2, '0')}`;
+                  const isAvailable = date >= today && (availableSchedule[date] || []).length > 0;
                   return (
-                    <div 
-                      key={day}
-                      className={`calendar-cell-item calendar-day-cell ${hasSlots ? 'day-has-slots' : 'day-no-slots'} ${isSelected ? 'day-selected' : ''}`}
-                      onClick={() => {
-                        if (!hasSlots) return; // 過去的日期、或後台沒開班，完全禁用點擊
-                        setSelectedDate(dateStr);
-                        setSelectedTime(''); // 切換日期時重置已選時間
-                      }}
+                    <button
+                      key={date}
+                      type="button"
+                      disabled={!isAvailable}
+                      className={selectedDate === date ? 'selected' : ''}
+                      onClick={() => { setSelectedDate(date); setSelectedTime(''); }}
+                      aria-label={`${date}${isAvailable ? ' 可預約' : ' 未開放'}`}
                     >
                       {day}
-                    </div>
+                    </button>
                   );
                 })}
               </div>
+              {availableDates.length === 0 && <p className="schedule-note">店家目前尚未開放未來班表</p>}
             </div>
 
-            {/* ⏰ 2. 動態時段顆粒區塊 (選了日期才跳出來) */}
-            <div style={{ marginTop: '16px', minHeight: '110px', textAlign: 'left' }}>
-              <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#555' }}>
-                {selectedDate ? `📅 已選日期：${selectedDate} ｜ 請選擇時段：` : '👈 請先從上方日曆點選有粉底顏色的日期'}
+            <div className="time-panel">
+              <strong>{selectedDate || '請先選擇日期'}</strong>
+              <div className="time-grid">
+                {(availableSchedule[selectedDate] || []).map(time => {
+                  const isPast = new Date(`${selectedDate}T${time}:00`) <= new Date();
+                  const isTaken = slotAvailability[time] === false;
+                  const disabled = isPast || isTaken || isLoadingSlots;
+                  return (
+                    <button
+                      key={time}
+                      type="button"
+                      disabled={disabled}
+                      className={selectedTime === time ? 'selected' : ''}
+                      onClick={() => setSelectedTime(time)}
+                    >
+                      {time}{isTaken ? ' 已滿' : ''}
+                    </button>
+                  );
+                })}
               </div>
+              {selectedDate && (availableSchedule[selectedDate] || []).length === 0 && <p className="schedule-note">這天沒有開放時段</p>}
+            </div>
+          </div>
+        )}
+      </section>
 
-              {selectedDate && availableSchedule[selectedDate] && (
-                <div className="time-slots-container">
-                  {availableSchedule[selectedDate].map((time) => {
-                    const slotHour = parseInt(time.split(':')[0]); // 轉成數字小時（如 "14:00" -> 14）
-                    
-                    // 🎯 防呆判斷 B：如果點選的是「今天」，且班表時段小時小於或等於當下系統小時，就判定過期
-                    const isTimePast = (selectedDate === todayStr) && (slotHour <= currentHour);
-                    const isTimeSelected = selectedTime === time;
+      <section className="booking-section rules-section" aria-labelledby="rules-title">
+        <div className="booking-section-heading">
+          <div>
+            <span className="step-label">預約須知</span>
+            <h2 id="rules-title">到店前請留意</h2>
+          </div>
+        </div>
+        {studio.announcement && (
+          <div className="shop-info-box">
+            <strong>店家公告</strong>
+            <p>{studio.announcement}</p>
+          </div>
+        )}
+        <p>{studio.rules || '目前店家尚未設定預約須知。'}</p>
+        <div className="shop-policy-grid">
+          <div>
+            <span>營業地址</span>
+            <strong>{studioAddress}</strong>
+          </div>
+          <div>
+            <span>付款方式</span>
+            <strong>{studio.paymentMethods || 'LINE Pay、轉帳、現金'}</strong>
+          </div>
+          <div>
+            <span>取消規則</span>
+            <strong>{studio.cancellationPolicy || '預約前 24 小時可取消並退還訂金。'}</strong>
+          </div>
+        </div>
+      </section>
 
-                    return (
-                      <button 
-                        key={time}
-                        disabled={isTimePast} // 原生 DOM 鎖定，防點擊
-                        className={`time-chip ${isTimeSelected ? 'selected' : ''} ${isTimePast ? 'time-chip-disabled' : ''}`}
-                        onClick={() => setSelectedTime(time)}
-                      >
-                        {time}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+      <section className="booking-section note-section" aria-labelledby="note-title">
+        <div className="booking-section-heading">
+          <div>
+            <span className="step-label">步驟 3</span>
+            <h2 id="note-title">預約備註</h2>
+          </div>
+          <span className="section-meta">讓美甲師提前準備</span>
+        </div>
+
+        <div className="booking-note-grid">
+          <label>
+            <span>想做的款式</span>
+            <input value={styleRequest} onChange={event => setStyleRequest(event.target.value)} placeholder="例如：裸粉貓眼、法式、想參考某張作品" />
+          </label>
+          <label>
+            <span>IG / LINE 聯絡方式</span>
+            <input value={contactInfo} onChange={event => setContactInfo(event.target.value)} placeholder="例如：@naillab 或 LINE ID" />
+          </label>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={needsRemoval} onChange={event => setNeedsRemoval(event.target.checked)} />
+            <span>這次需要卸甲</span>
+          </label>
+          <label>
+            <span>過敏提醒</span>
+            <input value={allergyNote} onChange={event => setAllergyNote(event.target.value)} placeholder="例如：對凝膠、酒精或金屬飾品過敏" />
+          </label>
+          <label className="wide-field">
+            <span>其他備註</span>
+            <textarea value={customerNote} onChange={event => setCustomerNote(event.target.value)} rows="3" placeholder="例如：希望款式偏短、工作關係不能太亮、當天可能提早到" />
+          </label>
+        </div>
+      </section>
+
+      <section className={selectedService ? 'booking-section deposit-section' : 'booking-section deposit-section muted-section'} aria-labelledby="deposit-title">
+        <div className="booking-section-heading">
+          <div>
+            <span className="step-label">步驟 4</span>
+            <h2 id="deposit-title">支付預約訂金</h2>
+          </div>
+          <span className="section-meta">{isDepositRequired ? `取消 ${refundHours} 小時前可退` : '此店家未開啟訂金'}</span>
+        </div>
+
+        {selectedService ? (
+          <div className="deposit-card">
+            <div>
+              <span>本次服務金額</span>
+              <strong>NT${servicePrice.toLocaleString()}</strong>
+            </div>
+            <div>
+              <span>需先支付訂金</span>
+              <strong>{isDepositRequired ? `NT${depositAmount.toLocaleString()}` : '免訂金'}</strong>
+            </div>
+            <div>
+              <span>到店尾款</span>
+              <strong>NT${remainingAmount.toLocaleString()}</strong>
+            </div>
+          </div>
+        ) : (
+          <div className="inline-empty">選好服務後，會自動計算訂金。</div>
+        )}
+      </section>
+
+      <div className="booking-summary-bar">
+        <div className="booking-summary-copy">
+          <span>{selectedService ? `${selectedService.name} · ${selectedService.duration || 60} 分鐘` : '尚未選擇服務'}</span>
+          <strong>{selectedService ? `NT$${Number(selectedService.price || 0).toLocaleString()}` : '選好服務後繼續'}</strong>
+        </div>
+        <button type="button" disabled={!canSubmit} onClick={() => setIsDepositModalOpen(true)}>
+          {isSubmitting ? '正在送出...' : selectedTime ? (isDepositRequired ? `確認並支付訂金 NT$${depositAmount.toLocaleString()}` : '確認預約申請') : '請選擇日期與時段'}
+        </button>
+      </div>
+
+      {isDepositModalOpen && selectedService && (
+        <div className="deposit-modal-backdrop" role="dialog" aria-modal="true" aria-label="訂金付款確認">
+          <div className="deposit-modal">
+            <button className="deposit-modal-close" type="button" onClick={() => setIsDepositModalOpen(false)} aria-label="關閉">×</button>
+            <span className="deposit-kicker">DEPOSIT PAYMENT</span>
+            <h2>確認預約內容</h2>
+            <p>請確認店家、服務、時間、訂金與取消規則，送出後店家會收到預約申請。</p>
+
+            <div className="deposit-total">
+              <span>{isDepositRequired ? '本次需付訂金' : '本次預約訂金'}</span>
+              <strong>{isDepositRequired ? `NT${depositAmount.toLocaleString()}` : '免訂金'}</strong>
             </div>
 
-            {/* 底部按鈕 */}
-            <div style={{ display: 'flex', gap: '12px', marginTop: '16px', borderTop: '1px solid #eee', paddingTop: '14px' }}>
-              <button 
-                type="button"
-                onClick={() => setShowBookingModal(false)} 
-                style={{ flex: 1, padding: '11px', background: '#eee', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', color: '#555', fontSize: '14px' }}
-              >
-                返回修改款式
-              </button>
-              <button 
-                type="button"
-                onClick={handleFinalSubmit} 
-                disabled={!selectedDate || !selectedTime}
-                style={{ 
-                  flex: 1, padding: '11px', border: 'none', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px',
-                  background: (selectedDate && selectedTime) ? colors.primary : '#ccc',
-                  color: '#fff',
-                  cursor: (selectedDate && selectedTime) ? 'pointer' : 'not-allowed',
-                  boxShadow: (selectedDate && selectedTime) ? '0 4px 10px rgba(86,10,12,0.15)' : 'none'
-                }}
-              >
-                確認預約送出 🚀
-              </button>
+            <div className="payment-methods" aria-label="付款方式">
+              {['LINE Pay', '信用卡', '轉帳'].map(method => (
+                <button
+                  key={method}
+                  type="button"
+                  className={paymentMethod === method ? 'selected' : ''}
+                  onClick={() => setPaymentMethod(method)}
+                >
+                  {method}
+                </button>
+              ))}
             </div>
 
+            <div className="deposit-breakdown">
+              <div><span>店家</span><strong>{studioName}</strong></div>
+              <div><span>服務項目</span><strong>{selectedService.name}</strong></div>
+              <div><span>預約時間</span><strong>{selectedDate} {selectedTime}</strong></div>
+              <div><span>取消規則</span><strong>{isDepositRequired ? `預約前 ${refundHours} 小時可退訂金` : '不需訂金，依店家規則取消'}</strong></div>
+              {styleRequest && <div><span>款式需求</span><strong>{styleRequest}</strong></div>}
+              {needsRemoval && <div><span>卸甲</span><strong>需要卸甲</strong></div>}
+              {allergyNote && <div><span>過敏提醒</span><strong>{allergyNote}</strong></div>}
+              {contactInfo && <div><span>聯絡方式</span><strong>{contactInfo}</strong></div>}
+              <div><span>到店尾款</span><strong>NT${remainingAmount.toLocaleString()}</strong></div>
+            </div>
+
+            <button className="deposit-pay-button" type="button" disabled={isSubmitting} onClick={submitBooking}>
+              {isSubmitting ? '送出中...' : (isDepositRequired ? '完成訂金付款並送出' : '送出預約申請')}
+            </button>
+            <small>目前為專題展示版付款流程，正式上線時可串接綠界、藍新或 Stripe。</small>
           </div>
         </div>
       )}
 
+      {previewImage && (
+        <div className="image-viewer" role="dialog" aria-modal="true" aria-label="作品圖片預覽" onClick={() => setPreviewImageIndex(null)}>
+          <button className="viewer-close" type="button" onClick={() => setPreviewImageIndex(null)} aria-label="關閉圖片">×</button>
+          {portfolioImages.length > 1 && (
+            <>
+              <button className="viewer-prev" type="button" onClick={event => { event.stopPropagation(); setPreviewImageIndex((previewImageIndex - 1 + portfolioImages.length) % portfolioImages.length); }} aria-label="上一張">‹</button>
+              <button className="viewer-next" type="button" onClick={event => { event.stopPropagation(); setPreviewImageIndex((previewImageIndex + 1) % portfolioImages.length); }} aria-label="下一張">›</button>
+            </>
+          )}
+          <img src={previewImage} alt="作品大圖" onClick={event => event.stopPropagation()} onError={event => { event.currentTarget.src = fallbackImage; }} />
+          <span className="viewer-count">{previewImageIndex + 1} / {portfolioImages.length}</span>
+        </div>
+      )}
     </div>
   );
 }
