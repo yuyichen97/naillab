@@ -60,7 +60,8 @@ function decodeBase64UrlJson(value) {
 
 function readLineCallbackUserFromUrl() {
   const searchParams = new URLSearchParams(window.location.search);
-  const encodedUser = searchParams.get('line_demo_user');
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const encodedUser = searchParams.get('line_demo_user') || hashParams.get('line_demo_user');
   if (!encodedUser) return null;
 
   try {

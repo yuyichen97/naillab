@@ -38,7 +38,22 @@ const regionData = {
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isEmailAccount = (value) => emailRegex.test(value.trim());
 const pendingRoleStorageKey = 'nail-lab-pending-auth-role';
-const lineAuthStartUrl = import.meta.env.VITE_LINE_AUTH_START_URL || 'http://localhost:5001/api/auth/line/start';
+
+const getLineAuthStartUrl = () => {
+  const configuredUrl = import.meta.env.VITE_LINE_AUTH_START_URL;
+  const isLocalSite =
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+  if (isLocalSite) {
+    return configuredUrl || 'http://localhost:5001/api/auth/line/start';
+  }
+
+  if (configuredUrl && !configuredUrl.includes('localhost')) {
+    return configuredUrl;
+  }
+
+  return `${window.location.origin}/api/auth/line/start`;
+};
 
 const localDemoUsers = {
   customer: {
@@ -113,12 +128,12 @@ const getOAuthCallbackError = () => {
 
   if (lineError) {
     const messages = {
-      missing_line_secret: 'LINE 登入還沒完成：請先把 LINE Channel Secret 放到 server/.env，並重新啟動後端。',
+      missing_line_secret: 'LINE 登入還沒完成：請先在 Vercel 環境變數放入 LINE Channel Secret；本機測試則放到 server/.env。',
       invalid_line_state: 'LINE 登入逾時或來源不一致，請重新按一次 LINE 登入。',
       expired_line_state: 'LINE 登入等待太久，請重新按一次 LINE 登入。',
       missing_line_code: 'LINE 沒有回傳登入授權碼，請重新按一次 LINE 登入。',
       line_token_exchange_failed: 'LINE 登入失敗：後端無法用授權碼換取 LINE 登入資料，請確認 Channel ID、Channel Secret 與 Callback URL。',
-      line_profile_failed: 'LINE 登入失敗：後端無法讀取 LINE 個人資料，請確認 LINE Login channel 已啟用。'
+      line_profile_failed: 'LINE 登入失敗：後端無法讀取 LINE 個人資料，請確認 LINE Login channel 已啟用。',
     };
 
     return messages[lineError] || `LINE 登入失敗：${lineError}`;
@@ -127,7 +142,7 @@ const getOAuthCallbackError = () => {
   if (!errorDescription && !errorCode) return '';
 
   if (errorDescription?.includes('Error getting user profile from external provider')) {
-    return 'LINE 登入回傳失敗：Supabase 目前無法讀取 LINE 個人資料。請先確認 LINE provider 的 Client Secret、Scopes 與「允許無 Email 使用者」設定。';
+    return 'LINE 登入回傳失敗：目前看起來還走到舊的 Supabase LINE 路徑。請重新整理後再按一次 LINE 登入，讓它改走 Nail Lab 的 LINE 登入入口。';
   }
 
   return `LINE 登入回傳失敗：${errorDescription || errorCode}`;
@@ -193,7 +208,7 @@ export default function Login({ onLogin, isPasswordRecovery = false, onRecoveryC
     setFormMessage('');
     window.localStorage.setItem(pendingRoleStorageKey, selectedRole);
 
-    const url = new URL(lineAuthStartUrl);
+    const url = new URL(getLineAuthStartUrl(), window.location.origin);
     url.searchParams.set('role', selectedRole);
     url.searchParams.set('returnTo', window.location.origin);
     window.location.href = url.toString();
